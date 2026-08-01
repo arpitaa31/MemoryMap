@@ -2,10 +2,12 @@
 
 import { collection, getDocs, query, Timestamp, where } from "firebase/firestore";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import CreateMemoryMapModal from "../../components/CreateMemoryMapModal";
 import MemoryMapLogo from "../components/MemoryMapLogo";
 import MemoryMapWordmark from "../components/MemoryMapWordmark";
+import DashboardDecorations from "./components/DashboardDecorations";
 import { useAuth } from "../providers/AuthProvider";
 import { assertFirebaseConfig, auth, db } from "../../lib/firebase/client";
 import { signOut } from "firebase/auth";
@@ -19,6 +21,7 @@ export type MemoryMapSummary = {
   roomCount: number;
   memoryCount: number;
   memberCount: number;
+  status: "setup" | "active";
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 };
@@ -51,15 +54,72 @@ function formatUpdatedDate(timestamp?: Timestamp) {
   return `Updated ${timestamp.toDate().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
 }
 
+function MiniCampusPreview({ variant }: { variant: number }) {
+  return (
+    <div className={`mm-dashboard-mini-map mm-dashboard-mini-map--${variant}`} aria-hidden="true">
+      <svg viewBox="0 0 300 132" fill="none">
+        <path className="mm-dashboard-mini-map__corridor" d="M18 66H282M150 18V114" />
+        <rect x="24" y="21" width="77" height="34" rx="2" />
+        <rect x="199" y="21" width="77" height="34" rx="2" />
+        <rect x="24" y="77" width="77" height="34" rx="2" />
+        <rect x="199" y="77" width="77" height="34" rx="2" />
+        <path className="mm-dashboard-mini-map__door" d="M101 38H117M183 94H199" />
+        <circle className="mm-dashboard-mini-map__marker" cx={variant === 1 ? "222" : variant === 2 ? "70" : "150"} cy={variant === 1 ? "38" : variant === 2 ? "94" : "66"} r="4" />
+      </svg>
+    </div>
+  );
+}
+
+function CreateCampusPreview() {
+  return (
+    <div className="mm-dashboard-create__visual" aria-hidden="true">
+      <svg viewBox="0 0 360 220" fill="none">
+        <path className="mm-dashboard-create__corridor" d="M24 110H336M180 27V193" />
+        <rect className="mm-dashboard-create__room" x="38" y="37" width="94" height="52" rx="3" />
+        <rect className="mm-dashboard-create__room" x="228" y="37" width="94" height="52" rx="3" />
+        <rect className="mm-dashboard-create__room" x="38" y="132" width="94" height="52" rx="3" />
+        <path className="mm-dashboard-create__door" d="M132 63H153M207 158H228" />
+        <circle className="mm-dashboard-create__point" cx="180" cy="110" r="7" />
+        <path className="mm-dashboard-create__plus" d="M180 101V119M171 110H189" />
+      </svg>
+      <span className="mm-dashboard-create__area">Ground floor / starting layout</span>
+      <span className="mm-dashboard-create__label mm-dashboard-create__label--classroom">Classroom</span>
+      <span className="mm-dashboard-create__label mm-dashboard-create__label--library">Library</span>
+      <span className="mm-dashboard-create__label mm-dashboard-create__label--court">Court</span>
+    </div>
+  );
+}
+
+function EmptyCampusIllustration() {
+  return (
+    <div className="mm-dashboard-empty__illustration" aria-hidden="true">
+      <svg viewBox="0 0 330 190" fill="none">
+        <path className="mm-dashboard-empty__corridor" d="M20 95H310M165 24V166" />
+        <rect x="33" y="39" width="86" height="45" rx="2" />
+        <rect x="211" y="39" width="86" height="45" rx="2" />
+        <rect x="33" y="108" width="86" height="45" rx="2" />
+        <path className="mm-dashboard-empty__unfinished" d="M211 108H297V153H253" />
+        <circle className="mm-dashboard-empty__point" cx="165" cy="95" r="6" />
+        <path className="mm-dashboard-empty__plus" d="M165 86V104M156 95H174" />
+      </svg>
+      <span>Your first campus starts here.</span>
+    </div>
+  );
+}
+
 export function DashboardLoadingState({ message }: { message: string }) {
   return (
     <main className="mm-dashboard-page" aria-busy="true">
       <div className="mm-dashboard-loading" role="status" aria-live="polite">
-        <span className="mm-eyebrow mm-eyebrow--moss">MemoryMap</span>
-        <p>{message}</p>
+        <div className="mm-dashboard-loading__header" aria-hidden="true"><span /><span /><span /></div>
+        <div className="mm-dashboard-loading__intro">
+          <span className="mm-eyebrow mm-eyebrow--moss">MemoryMap</span>
+          <p>{message}</p>
+          <i aria-hidden="true" />
+        </div>
+        <div className="mm-dashboard-loading__create" aria-hidden="true" />
         <div className="mm-dashboard-loading__skeletons" aria-hidden="true">
-          <span />
-          <span />
+          <span /><span /><span />
         </div>
       </div>
     </main>
@@ -73,7 +133,7 @@ export default function DashboardClient() {
   const [mapsLoading, setMapsLoading] = useState(true);
   const [mapsError, setMapsError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const [createMessage, setCreateMessage] = useState("");
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [signOutError, setSignOutError] = useState("");
   const [isSigningOut, setIsSigningOut] = useState(false);
 
@@ -108,6 +168,7 @@ export default function DashboardClient() {
             roomCount: countOrDefault(data.roomCount, 0),
             memoryCount: countOrDefault(data.memoryCount, 0),
             memberCount: countOrDefault(data.memberCount, 1),
+            status: data.status === "active" ? "active" as const : "setup" as const,
             createdAt: timestampOrUndefined(data.createdAt),
             updatedAt: timestampOrUndefined(data.updatedAt),
           } satisfies MemoryMapSummary;
@@ -127,10 +188,6 @@ export default function DashboardClient() {
       cancelled = true;
     };
   }, [loading, retryCount, user]);
-
-  const showCreateMessage = useCallback(() => {
-    setCreateMessage("The campus creation flow is coming next.");
-  }, []);
 
   const handleSignOut = async () => {
     setSignOutError("");
@@ -160,10 +217,14 @@ export default function DashboardClient() {
           <MemoryMapLogo size={30} variant="dark" />
           <MemoryMapWordmark />
         </Link>
+        <nav className="mm-dashboard-nav" aria-label="Dashboard navigation">
+          <Link href="/dashboard" aria-current="page">Home</Link>
+          <a href="#memorymaps-title">Your MemoryMaps</a>
+        </nav>
         <div className="mm-dashboard-user">
           {user.photoURL ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img className="mm-dashboard-user__photo" src={user.photoURL} alt={`${displayName} profile`} />
+            <img className="mm-dashboard-user__photo" src={user.photoURL} alt={`${displayName} profile`} referrerPolicy="no-referrer" />
           ) : (
             <span className="mm-dashboard-user__initials" aria-hidden={userHasVisibleName}>{initials}</span>
           )}
@@ -171,29 +232,30 @@ export default function DashboardClient() {
             <strong>{displayName}</strong>
             {user.email && <span>{user.email}</span>}
           </div>
-          <button type="button" className="mm-dashboard-signout" onClick={handleSignOut} disabled={isSigningOut}>
+          <button type="button" className="mm-dashboard-signout" onClick={handleSignOut} disabled={isSigningOut} aria-busy={isSigningOut} aria-label={isSigningOut ? "Signing out" : "Sign out"}>
             {isSigningOut ? "Signing out…" : "Sign out"}
           </button>
+          <span className="sr-only" role="status" aria-live="polite">{isSigningOut ? "Signing out" : ""}</span>
         </div>
       </header>
 
+      <DashboardDecorations />
       <div className="mm-dashboard-main mm-frame">
         <section className="mm-dashboard-intro" aria-labelledby="dashboard-title">
           <p className="mm-eyebrow mm-eyebrow--moss">Your private archive</p>
           <h1 id="dashboard-title">Welcome back, {getFirstName(user.displayName, user.email)}.</h1>
-          <p>Your private campuses and shared memories will appear here.</p>
+          <p>Your private campuses and shared memories live here.</p>
+          <span>Start a new campus or return to one you have already created.</span>
         </section>
 
         <section className="mm-dashboard-create" aria-labelledby="create-memorymap-title">
-          <div>
+          <div className="mm-dashboard-create__copy">
             <p className="mm-eyebrow mm-eyebrow--ochre">Start with a place</p>
             <h2 id="create-memorymap-title">Create your MemoryMap</h2>
             <p>Build a private campus, add its familiar rooms and invite the people who shared those places with you.</p>
+            <button type="button" className="mm-button mm-button--coral" onClick={() => setIsCreateOpen(true)}>Create your MemoryMap</button>
           </div>
-          <div className="mm-dashboard-create__action">
-            <button type="button" className="mm-button mm-button--coral" onClick={showCreateMessage}>Create your MemoryMap</button>
-            {createMessage && <p className="mm-auth-message" role="status" aria-live="polite">{createMessage}</p>}
-          </div>
+          <CreateCampusPreview />
         </section>
 
         <section className="mm-dashboard-list" aria-labelledby="memorymaps-title">
@@ -216,43 +278,39 @@ export default function DashboardClient() {
 
           {!mapsLoading && mapsError && (
             <div className="mm-dashboard-empty mm-dashboard-empty--error" role="alert">
-              <h3>We could not load your MemoryMaps.</h3>
-              <button type="button" className="mm-button mm-button--outline" onClick={() => { setMapsLoading(true); setMapsError(false); setRetryCount((count) => count + 1); }}>Retry</button>
+              <div><h3>We could not load your MemoryMaps.</h3><p>Your account is still signed in. Try loading your campuses again.</p></div>
+              <button type="button" className="mm-button mm-button--outline" onClick={() => { setMapsLoading(true); setMapsError(false); setRetryCount((count) => count + 1); }}>Try again</button>
             </div>
           )}
 
           {!mapsLoading && !mapsError && memoryMaps.length === 0 && (
             <div className="mm-dashboard-empty">
-              <span className="mm-dashboard-empty__mark" aria-hidden="true">+</span>
-              <h3>No MemoryMaps yet.</h3>
-              <p>Create your first private campus and begin adding the places your group remembers.</p>
-              <button type="button" className="mm-button mm-button--coral" onClick={showCreateMessage}>Create your MemoryMap</button>
-              {createMessage && <p className="mm-auth-message" role="status" aria-live="polite">{createMessage}</p>}
+              <div className="mm-dashboard-empty__copy">
+                <p className="mm-eyebrow mm-eyebrow--ochre">A blank place to begin</p>
+                <h3>No MemoryMaps yet.</h3>
+                <p>Create your first private campus and begin saving the places your group will want to revisit later.</p>
+                <button type="button" className="mm-button mm-button--coral" onClick={() => setIsCreateOpen(true)}>Create your first MemoryMap</button>
+              </div>
+              <EmptyCampusIllustration />
             </div>
           )}
 
           {!mapsLoading && !mapsError && memoryMaps.length > 0 && (
-            <div className="mm-dashboard-map-list">
-              {memoryMaps.map((memoryMap) => (
-                <article className="mm-dashboard-map-row" key={memoryMap.id}>
-                  <div className="mm-dashboard-map-row__title">
-                    <span className="mm-dashboard-map-row__marker" aria-hidden="true" />
-                    <div>
-                      <h3>{memoryMap.name}</h3>
-                      {memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}
-                    </div>
+            <div className="mm-dashboard-map-grid">
+              {memoryMaps.map((memoryMap, index) => (
+                <Link className="mm-dashboard-map-card" key={memoryMap.id} href={`/memorymaps/${memoryMap.id}${memoryMap.status === "setup" ? "/setup" : ""}`}>
+                  <div className="mm-dashboard-map-card__heading">
+                    <div><h3>{memoryMap.name}</h3>{memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}</div>
+                    <span className="mm-dashboard-private">{memoryMap.status === "setup" ? "Setup incomplete" : "Private campus"}</span>
                   </div>
-                  <span className="mm-dashboard-private">Private</span>
-                  <div className="mm-dashboard-map-row__stats" aria-label={`${memoryMap.roomCount} rooms, ${memoryMap.memoryCount} memories, ${memoryMap.memberCount} members`}>
-                    <span>{memoryMap.roomCount} rooms</span>
-                    <span>{memoryMap.memoryCount} memories</span>
-                    <span>{memoryMap.memberCount} members</span>
+                  <MiniCampusPreview variant={index % 3} />
+                  <div className="mm-dashboard-map-card__stats" aria-label={`${memoryMap.roomCount} rooms, ${memoryMap.memoryCount} memories, ${memoryMap.memberCount} members`}>
+                    <span><b>{memoryMap.roomCount}</b> rooms</span>
+                    <span><b>{memoryMap.memoryCount}</b> memories</span>
+                    <span><b>{memoryMap.memberCount}</b> members</span>
                   </div>
-                  <div className="mm-dashboard-map-row__updated">
-                    <span>{formatUpdatedDate(memoryMap.updatedAt)}</span>
-                    <small>Campus view coming next</small>
-                  </div>
-                </article>
+                  <div className="mm-dashboard-map-card__footer"><span>{formatUpdatedDate(memoryMap.updatedAt)}</span><small>{memoryMap.status === "setup" ? "Continue setup" : "Open campus"}</small></div>
+                </Link>
               ))}
             </div>
           )}
@@ -260,6 +318,7 @@ export default function DashboardClient() {
 
         {signOutError && <p className="mm-auth-message mm-auth-message--error mm-dashboard-signout-message" role="alert" aria-live="polite">{signOutError}</p>}
       </div>
+      <CreateMemoryMapModal open={isCreateOpen} user={user} onClose={() => setIsCreateOpen(false)} />
     </main>
   );
 }

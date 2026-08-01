@@ -2,12 +2,62 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function mapPath(memoryMapId) {
+      return /databases/$(database)/documents/memoryMaps/$(memoryMapId);
+    }
+
+    function isExistingOwner(memoryMapId) {
+      return signedIn()
+        && get(mapPath(memoryMapId)).data.ownerId == request.auth.uid;
+    }
+
+    function isOwnerAfterWrite(memoryMapId) {
+      return signedIn()
+        && getAfter(mapPath(memoryMapId)).data.ownerId == request.auth.uid;
+    }
+
     match /memoryMaps/{memoryMapId} {
-      allow create: if request.auth != null
+      allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid;
 
-      allow read, update, delete: if request.auth != null
-        && resource.data.ownerId == request.auth.uid;
+      allow read, update, delete: if isExistingOwner(memoryMapId);
+
+      match /members/{userId} {
+        allow create: if signedIn()
+          && isOwnerAfterWrite(memoryMapId)
+          && userId == request.auth.uid
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.role == "owner"
+          && request.resource.data.status == "active";
+
+        allow read, update, delete: if isExistingOwner(memoryMapId);
+      }
+
+      match /floors/{floorId} {
+        allow create: if isOwnerAfterWrite(memoryMapId);
+
+        allow read, update, delete: if isExistingOwner(memoryMapId);
+
+        match /rooms/{roomId} {
+          allow read, create, update, delete:
+            if isExistingOwner(memoryMapId);
+        }
+
+        match /corridors/{corridorId} {
+          allow read, create, update, delete:
+            if isExistingOwner(memoryMapId);
+        }
+      }
+
+      match /memories/{memoryId} {
+        allow read, create, update, delete:
+          if isExistingOwner(memoryMapId);
+      }
     }
   }
 }
