@@ -138,6 +138,7 @@ export default function DashboardClient() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [signOutError, setSignOutError] = useState("");
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [campusFilter, setCampusFilter] = useState<"all" | "owned" | "shared" | "setup">("all");
 
   useEffect(() => {
     if (loading) return;
@@ -152,15 +153,18 @@ export default function DashboardClient() {
     let cancelled = false;
 
     const loadMemoryMaps = async () => {
+      let stage = "configuration";
       try {
         assertFirebaseConfig();
         if (!db) throw new Error("Firestore is unavailable.");
         const firestore = db;
         const memoryMapsQuery = query(collection(db, "memoryMaps"), where("ownerId", "==", user.uid));
-        const [snapshot, membershipSnapshot] = await Promise.all([
-          getDocs(memoryMapsQuery),
-          getDocs(collection(db, "users", user.uid, "memoryMaps")),
-        ]);
+        stage = "owned campus query";
+        let snapshot;
+        try { snapshot = await getDocs(memoryMapsQuery); } catch (error) { console.error("Dashboard campus load failed", { stage, code: error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined, message: error instanceof Error ? error.message : "Unknown Firestore error" }); throw error; }
+        stage = "membership index query";
+        let membershipSnapshot;
+        try { membershipSnapshot = await getDocs(collection(firestore, "users", user.uid, "memoryMaps")); } catch (error) { console.error("Dashboard campus load failed", { stage, code: error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined, message: error instanceof Error ? error.message : "Unknown Firestore error" }); throw error; }
         if (cancelled) return;
 
         const nextMaps: MemoryMapSummary[] = snapshot.docs.map((document) => {
@@ -182,10 +186,12 @@ export default function DashboardClient() {
         });
 
         const ownedIds = new Set(nextMaps.map((memoryMap) => memoryMap.id));
+        stage = "shared campus document load";
         const sharedMaps = await Promise.all(membershipSnapshot.docs
           .filter((membership) => membership.data().status === "active" && !ownedIds.has(membership.id))
           .map(async (membership): Promise<MemoryMapSummary | null> => {
-            const document = await getDoc(doc(firestore, "memoryMaps", membership.id));
+            let document;
+            try { document = await getDoc(doc(firestore, "memoryMaps", membership.id)); } catch (error) { console.error("Dashboard campus load failed", { stage, code: error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined, message: error instanceof Error ? error.message : "Unknown Firestore error" }); throw error; }
             if (!document.exists()) return null;
             const data = document.data() as Record<string, unknown>;
             if (data.status !== "active" || data.ownerId === user.uid) return null;
@@ -204,7 +210,8 @@ export default function DashboardClient() {
 
         nextMaps.sort((a, b) => (b.updatedAt?.toMillis() ?? 0) - (a.updatedAt?.toMillis() ?? 0));
         setMemoryMaps(nextMaps);
-      } catch {
+      } catch (error) {
+        console.error("Dashboard campus load failed", { stage, code: error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined, message: error instanceof Error ? error.message : "Unknown Firestore error" });
         if (!cancelled) setMapsError(true);
       } finally {
         if (!cancelled) setMapsLoading(false);
@@ -237,6 +244,11 @@ export default function DashboardClient() {
   const displayName = user.displayName || "MemoryMap member";
   const initials = getInitials(user.displayName, user.email);
   const userHasVisibleName = Boolean(user.displayName || user.email);
+  const ownedCount = memoryMaps.filter((memoryMap) => !memoryMap.isShared).length;
+  const sharedCount = memoryMaps.filter((memoryMap) => memoryMap.isShared).length;
+  const totalRooms = memoryMaps.reduce((sum, memoryMap) => sum + memoryMap.roomCount, 0);
+  const totalMemories = memoryMaps.reduce((sum, memoryMap) => sum + memoryMap.memoryCount, 0);
+  const visibleMaps = memoryMaps.filter((memoryMap) => campusFilter === "all" || (campusFilter === "owned" && !memoryMap.isShared) || (campusFilter === "shared" && memoryMap.isShared) || (campusFilter === "setup" && !memoryMap.isShared && memoryMap.status === "setup"));
 
   return (
     <main className="mm-dashboard-page">
@@ -267,13 +279,16 @@ export default function DashboardClient() {
         </div>
       </header>
 
-      <DashboardDecorations />
       <div className="mm-dashboard-main mm-frame">
         <section className="mm-dashboard-intro" aria-labelledby="dashboard-title">
           <p className="mm-eyebrow mm-eyebrow--moss">Your private archive</p>
           <h1 id="dashboard-title">Welcome back, {getFirstName(user.displayName, user.email)}.</h1>
           <p>Your private campuses and shared memories live here.</p>
-          <span>Start a new campus or return to one you have already created.</span>
+          <span>Build new campuses, revisit shared places and continue preserving memories.</span>
+        </section>
+
+        <section className="mm-dashboard-summary" aria-label="Archive summary">
+          {[['Campuses owned', ownedCount], ['Shared with you', sharedCount], ['Total rooms', totalRooms], ['Total memories', totalMemories]].map(([label, value]) => <div className="mm-dashboard-summary__item" key={String(label)}><span>{label}</span><strong>{mapsLoading ? "—" : value}</strong></div>)}
         </section>
 
         <section className="mm-dashboard-create" aria-labelledby="create-memorymap-title">
@@ -281,7 +296,7 @@ export default function DashboardClient() {
             <p className="mm-eyebrow mm-eyebrow--ochre">Start with a place</p>
             <h2 id="create-memorymap-title">Create your MemoryMap</h2>
             <p>Build a private campus, add its familiar rooms and invite the people who shared those places with you.</p>
-            <button type="button" className="mm-button mm-button--coral" onClick={() => setIsCreateOpen(true)}>Create your MemoryMap</button>
+            <button type="button" className="mm-button mm-button--coral" onClick={() => setIsCreateOpen(true)}>Start building</button>
           </div>
           <CreateCampusPreview />
         </section>
@@ -291,10 +306,11 @@ export default function DashboardClient() {
             <div>
               <p className="mm-eyebrow mm-eyebrow--moss">Your archive</p>
               <h2 id="memorymaps-title">Your campuses</h2>
-              <p>Campuses you create will remain private unless you invite other members.</p>
+              <p>Places you own and private campuses shared with you.</p>
             </div>
             {!mapsLoading && !mapsError && memoryMaps.length > 0 && <span className="mm-dashboard-list__count">{memoryMaps.length} {memoryMaps.length === 1 ? "campus" : "campuses"}</span>}
           </div>
+          <div className="mm-dashboard-filters" role="tablist" aria-label="Campus filters">{([['all', 'All'], ['owned', 'Owned'], ['shared', 'Shared with you'], ['setup', 'Setup incomplete']] as const).map(([value, label]) => <button type="button" role="tab" key={value} aria-selected={campusFilter === value} onClick={() => setCampusFilter(value)}>{label}</button>)}</div>
 
           {mapsLoading && (
             <div className="mm-dashboard-list__loading" aria-busy="true">
@@ -325,7 +341,7 @@ export default function DashboardClient() {
 
           {!mapsLoading && !mapsError && memoryMaps.length > 0 && (
             <div className="mm-dashboard-map-grid">
-              {memoryMaps.map((memoryMap, index) => (
+              {visibleMaps.map((memoryMap, index) => (
                 <Link className="mm-dashboard-map-card" key={memoryMap.id} href={`/memorymaps/${memoryMap.id}${memoryMap.status === "setup" ? "/setup" : ""}`}>
                   <div className="mm-dashboard-map-card__heading">
                     <div><h3>{memoryMap.name}</h3>{memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}{memoryMap.isShared && memoryMap.ownerName && <p>Owner: {memoryMap.ownerName}</p>}</div>
