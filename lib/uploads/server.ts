@@ -34,7 +34,7 @@ export type CdnUploadMetadata = {
   url: string;
   filename: string;
   size: number;
-  content_type: (typeof ALLOWED_IMAGE_TYPES)[number];
+  contentType: (typeof ALLOWED_IMAGE_TYPES)[number];
 };
 
 export type CdnOperationFailure = {
@@ -269,26 +269,39 @@ function parseCdnSize(value: unknown) {
 
 export async function uploadToHackClubCdn(file: File): Promise<CdnOperationResult<CdnUploadMetadata>> {
   const apiKey = process.env.HACKCLUB_CDN_API_KEY;
-  if (!apiKey) return { ok: false, error: { kind: "missing-key" } };
+  console.log("Hack Club CDN configured:", Boolean(apiKey));
+  if (!apiKey) {
+    console.error("Hack Club CDN upload failed", { stage: "configuration", status: 401, responseBody: "missing API key", fileName: file.name, fileSize: file.size, fileType: file.type });
+    return { ok: false, error: { kind: "missing-key", status: 401 } };
+  }
 
-  const formData = new FormData();
-  formData.append("file", file, file.name || "memory-image");
+  const safeFilename = (file.name || "memory-image").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 180) || "memory-image";
+  const cdnFormData = new FormData();
+  cdnFormData.append("file", file, safeFilename);
 
   let response: Response;
   try {
     response = await fetch(HACKCLUB_UPLOAD_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
-      body: formData,
+      body: cdnFormData,
       cache: "no-store",
     });
-  } catch {
+  } catch (error) {
+    console.error("Hack Club CDN upload failed", { stage: "network", status: undefined, responseBody: error instanceof Error ? error.message : "network error", fileName: safeFilename, fileSize: file.size, fileType: file.type });
     return { ok: false, error: { kind: "network" } };
   }
 
-  if (!response.ok) return { ok: false, error: { kind: "upstream", status: response.status } };
+  const responseText = await response.text();
+  let responseBody: unknown = responseText.slice(0, 1000);
+  try { responseBody = JSON.parse(responseText); } catch { /* keep a bounded text body */ }
+  if (!response.ok) {
+    console.error("Hack Club CDN upload failed", { stage: "upstream", status: response.status, responseBody, fileName: safeFilename, fileSize: file.size, fileType: file.type });
+    return { ok: false, error: { kind: "upstream", status: response.status } };
+  }
 
-  const payload = await readJson(response);
+  let payload: unknown = null;
+  try { payload = JSON.parse(responseText); } catch { payload = null; }
   if (!isRecord(payload)) return { ok: false, error: { kind: "invalid-response" } };
 
   const id = typeof payload.id === "string" ? payload.id : null;
@@ -298,10 +311,11 @@ export async function uploadToHackClubCdn(file: File): Promise<CdnOperationResul
   const contentType = allowedContentType(payload.content_type) ? payload.content_type : null;
 
   if (!id || !url || !filename || !size || !contentType) {
+    console.error("Hack Club CDN upload failed", { stage: "response-mapping", status: response.status, responseBody, fileName: safeFilename, fileSize: file.size, fileType: file.type });
     return { ok: false, error: { kind: "invalid-response" } };
   }
 
-  return { ok: true, data: { id, url, filename, size, content_type: contentType } };
+  return { ok: true, data: { id, url, filename, size, contentType } };
 }
 
 export async function deleteFromHackClubCdn(uploadId: string): Promise<CdnOperationResult<null>> {
@@ -324,30 +338,30 @@ export async function deleteFromHackClubCdn(uploadId: string): Promise<CdnOperat
 
 export function cdnErrorResponse(failure: CdnOperationFailure, operation: "upload" | "delete") {
   if (failure.kind === "missing-key") {
-    return NextResponse.json({ error: "The image service is not configured." }, { status: 503 });
+    return NextResponse.json({ error: "The image service is not configured correctly." }, { status: 401 });
   }
 
   if (failure.kind === "network") {
-    return NextResponse.json({ error: "The image service could not be reached." }, { status: 502 });
+    return NextResponse.json({ error: "The image service is temporarily unavailable." }, { status: 500 });
   }
 
   if (failure.kind === "invalid-response") {
-    return NextResponse.json({ error: "The image service returned an invalid response." }, { status: 502 });
+    return NextResponse.json({ error: "The image service is temporarily unavailable." }, { status: 500 });
   }
 
   switch (failure.status) {
     case 400:
       return NextResponse.json({ error: `${operation === "delete" ? "The deletion" : "The upload"} request was rejected.` }, { status: 502 });
     case 401:
-      return NextResponse.json({ error: "The image service credentials were not accepted." }, { status: 503 });
+      return NextResponse.json({ error: "The image-service API key was rejected." }, { status: 401 });
     case 402:
-      return NextResponse.json({ error: "The image service storage limit has been reached." }, { status: 503 });
+      return NextResponse.json({ error: "The image-storage quota has been reached." }, { status: 402 });
     case 404:
       return NextResponse.json({ error: "The requested upload was not found." }, { status: 404 });
     case 422:
-      return NextResponse.json({ error: "The image could not be accepted." }, { status: 422 });
+      return NextResponse.json({ error: "The image service rejected this file." }, { status: 422 });
     default:
-      return NextResponse.json({ error: "The image service could not complete the request." }, { status: 502 });
+      return NextResponse.json({ error: "The image service is temporarily unavailable." }, { status: 500 });
   }
 }
 
@@ -357,7 +371,7 @@ export function imageFirestoreFields(metadata: CdnUploadMetadata, uid: string): 
     imageUploadId: { stringValue: metadata.id },
     imageFilename: { stringValue: metadata.filename },
     imageSize: { integerValue: String(metadata.size) },
-    imageContentType: { stringValue: metadata.content_type },
+    imageContentType: { stringValue: metadata.contentType },
     imageUploaderId: { stringValue: uid },
   };
 }

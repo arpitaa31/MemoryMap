@@ -21,11 +21,11 @@ const MAX_ROOM_HEIGHT = 250;
 
 type FloorState = { floor: MemoryMapFloor; rooms: MemoryMapRoom[]; corridors: MemoryMapCorridor[] };
 type Selection = { kind: "room" | "corridor" | "floor"; id: string } | null;
-type DragState = { roomId: string; floorId: string; mode: "move" | "resize"; startX: number; startY: number; initial: MemoryMapRoom };
+type DragState = { kind: "room"; roomId: string; floorId: string; mode: "move" | "resize"; startX: number; startY: number; initial: MemoryMapRoom } | { kind: "corridor"; corridorId: string; floorId: string; startX: number; startY: number; initial: MemoryMapCorridor };
 type Modal = "floor" | "invite" | "done" | null;
 
 const roomTypes: Array<{ value: RoomType; label: string }> = [
-  { value: "classroom", label: "Classroom" }, { value: "laboratory", label: "Laboratory" }, { value: "library", label: "Library" }, { value: "auditorium", label: "Auditorium" }, { value: "sports", label: "Sports" }, { value: "office", label: "Office" }, { value: "canteen", label: "Canteen" }, { value: "other", label: "Other" },
+  { value: "classroom", label: "Classroom" }, { value: "laboratory", label: "Laboratory" }, { value: "library", label: "Library" }, { value: "auditorium", label: "Auditorium" }, { value: "sports", label: "Sports" }, { value: "office", label: "Office" }, { value: "canteen", label: "Canteen" }, { value: "stairs", label: "Stairs" }, { value: "other", label: "Other" },
 ];
 const accents: RoomAccent[] = ["coral", "green", "yellow", "teal", "neutral"];
 
@@ -54,6 +54,7 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
   const [selection, setSelection] = useState<Selection>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [drawMode, setDrawMode] = useState(false);
+  const [drawStyle, setDrawStyle] = useState<"solid" | "stairs">("solid");
   const [draftPoints, setDraftPoints] = useState<Array<{ x: number; y: number }>>([]);
   const [cursorPoint, setCursorPoint] = useState<{ x: number; y: number } | null>(null);
   const [modal, setModal] = useState<Modal>(null);
@@ -65,6 +66,7 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
   const [saveState, setSaveState] = useState<"Saved" | "Savingâ€¦" | "Unable to save">("Saved");
   const canvasRef = useRef<HTMLDivElement>(null);
   const saveRoomRef = useRef<(room: MemoryMapRoom, floorId: string) => Promise<void>>(async () => undefined);
+  const saveCorridorRef = useRef<(corridor: MemoryMapCorridor, floorId: string) => Promise<void>>(async () => undefined);
   const finishCorridorRef = useRef<() => Promise<void>>(async () => undefined);
 
   const currentState = floors.find((state) => state.floor.id === currentFloorId) ?? floors[0];
@@ -114,17 +116,33 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
       const point = pointFromEvent(event, canvasRef.current);
       const dx = point.x - drag.startX;
       const dy = point.y - drag.startY;
-      const nextRoom = drag.mode === "move"
-        ? { ...drag.initial, x: Math.max(0, Math.min(CANVAS_WIDTH - drag.initial.width, drag.initial.x + dx)), y: Math.max(0, Math.min(CANVAS_HEIGHT - drag.initial.height, drag.initial.y + dy)) }
-        : { ...drag.initial, width: Math.max(MIN_ROOM_WIDTH, Math.min(MAX_ROOM_WIDTH, drag.initial.width + dx)), height: Math.max(MIN_ROOM_HEIGHT, Math.min(MAX_ROOM_HEIGHT, drag.initial.height + dy)) };
-      setFloors((previous) => previous.map((state) => state.floor.id !== drag.floorId ? state : { ...state, rooms: state.rooms.map((room) => room.id === drag.roomId ? nextRoom : room) }));
+      if (drag.kind === "room") {
+        const nextRoom = drag.mode === "move"
+          ? { ...drag.initial, x: Math.max(0, Math.min(CANVAS_WIDTH - drag.initial.width, drag.initial.x + dx)), y: Math.max(0, Math.min(CANVAS_HEIGHT - drag.initial.height, drag.initial.y + dy)) }
+          : { ...drag.initial, width: Math.max(MIN_ROOM_WIDTH, Math.min(MAX_ROOM_WIDTH, drag.initial.width + dx)), height: Math.max(MIN_ROOM_HEIGHT, Math.min(MAX_ROOM_HEIGHT, drag.initial.height + dy)) };
+        setFloors((previous) => previous.map((state) => state.floor.id !== drag.floorId ? state : { ...state, rooms: state.rooms.map((room) => room.id === drag.roomId ? nextRoom : room) }));
+      } else {
+        const minX = Math.min(...drag.initial.points.map((point) => point.x));
+        const maxX = Math.max(...drag.initial.points.map((point) => point.x));
+        const minY = Math.min(...drag.initial.points.map((point) => point.y));
+        const maxY = Math.max(...drag.initial.points.map((point) => point.y));
+        const offsetX = Math.max(-minX, Math.min(CANVAS_WIDTH - maxX, dx));
+        const offsetY = Math.max(-minY, Math.min(CANVAS_HEIGHT - maxY, dy));
+        const nextCorridor = { ...drag.initial, points: drag.initial.points.map((point) => ({ x: point.x + offsetX, y: point.y + offsetY })) };
+        setFloors((previous) => previous.map((state) => state.floor.id !== drag.floorId ? state : { ...state, corridors: state.corridors.map((corridor) => corridor.id === drag.corridorId ? nextCorridor : corridor) }));
+      }
     };
     const handleUp = () => {
       if (!drag) return;
       const state = floors.find((item) => item.floor.id === drag.floorId);
-      const room = state?.rooms.find((item) => item.id === drag.roomId);
       setDrag(null);
-      if (room) void saveRoomRef.current(room, drag.floorId);
+      if (drag.kind === "room") {
+        const room = state?.rooms.find((item) => item.id === drag.roomId);
+        if (room) void saveRoomRef.current(room, drag.floorId);
+      } else {
+        const corridor = state?.corridors.find((item) => item.id === drag.corridorId);
+        if (corridor) void saveCorridorRef.current(corridor, drag.floorId);
+      }
     };
     window.addEventListener("keydown", handleKeyDown); window.addEventListener("pointermove", handleMove); window.addEventListener("pointerup", handleUp);
     return () => { window.removeEventListener("keydown", handleKeyDown); window.removeEventListener("pointermove", handleMove); window.removeEventListener("pointerup", handleUp); };
@@ -146,11 +164,26 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
     } catch { setSaveState("Unable to save"); }
   }, [memoryMapId]);
 
+  const saveCorridor = useCallback(async (corridor: MemoryMapCorridor, floorId: string) => {
+    if (!db) return;
+    setSaveState("Savingâ€¦");
+    try { await updateDoc(doc(db, "memoryMaps", memoryMapId, "floors", floorId, "corridors", corridor.id), { points: corridor.points, updatedAt: serverTimestamp() }); await updateDoc(mapRefFor(db, memoryMapId), { updatedAt: serverTimestamp() }); setSaveState("Saved"); } catch { setSaveState("Unable to save"); }
+  }, [memoryMapId]);
+
   const updateRoomLocal = (roomId: string, changes: Partial<MemoryMapRoom>) => {
     if (!currentState) return;
     const nextRoom = currentState.rooms.find((room) => room.id === roomId);
     setFloors((previous) => previous.map((state) => state.floor.id !== currentState.floor.id ? state : { ...state, rooms: state.rooms.map((room) => room.id === roomId ? { ...room, ...changes } : room) }));
     if (nextRoom) void saveRoom({ ...nextRoom, ...changes }, currentState.floor.id);
+  };
+
+  const saveMapName = async () => {
+    if (!db || !map) return;
+    const name = normaliseFloorName(map.name);
+    if (name.length < 2 || name.length > 80) return;
+    setMap((previous) => previous ? { ...previous, name } : previous);
+    setSaveState("Savingâ€¦");
+    try { await updateDoc(mapRefFor(db, memoryMapId), { name, updatedAt: serverTimestamp() }); setSaveState("Saved"); } catch { setSaveState("Unable to save"); }
   };
 
   const addFloor = async (event: React.FormEvent) => {
@@ -180,10 +213,10 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
     try { await batch.commit(); const nextFloors = floors.filter((state) => state.floor.id !== currentState.floor.id); setFloors(nextFloors); setCurrentFloorId(nextFloors[0].floor.id); setSelection(null); setSaveState("Saved"); } catch { setSaveState("Unable to save"); }
   };
 
-  const addRoom = async () => {
+  const addRoom = async (preset: { name: string; type: RoomType } = { name: "Untitled Room", type: "other" }) => {
     if (!currentState || !db) return;
     const roomRef = doc(collection(db, "memoryMaps", memoryMapId, "floors", currentState.floor.id, "rooms"));
-    const room: MemoryMapRoom = { id: roomRef.id, name: "Untitled Room", type: "other", accent: "neutral", x: 310 + (currentState.rooms.length % 3) * 45, y: 180 + (currentState.rooms.length % 2) * 45, width: 180, height: 110, rotation: 0, order: currentState.rooms.length };
+    const room: MemoryMapRoom = { id: roomRef.id, name: preset.name, type: preset.type, accent: "neutral", x: 310 + (currentState.rooms.length % 3) * 45, y: 180 + (currentState.rooms.length % 2) * 45, width: 180, height: 110, rotation: 0, order: currentState.rooms.length };
     setSaveState("Savingâ€¦");
     try { await setDoc(roomRef, { ...room, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }); await updateDoc(mapRefFor(db, memoryMapId), { roomCount: increment(1), updatedAt: serverTimestamp() }); setFloors((previous) => previous.map((state) => state.floor.id !== currentState.floor.id ? state : { ...state, rooms: [...state.rooms, room] })); setSelection({ kind: "room", id: room.id }); setSaveState("Saved"); } catch { setSaveState("Unable to save"); }
   };
@@ -203,15 +236,16 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
   const finishCorridor = useCallback(async () => {
     if (!drawMode || draftPoints.length < 2 || !currentState || !db) { setDrawMode(false); setDraftPoints([]); return; }
     const corridorRef = doc(collection(db, "memoryMaps", memoryMapId, "floors", currentState.floor.id, "corridors"));
-    const corridor: MemoryMapCorridor = { id: corridorRef.id, label: "Corridor", points: draftPoints, width: 14, style: "solid" };
+    const corridor: MemoryMapCorridor = { id: corridorRef.id, label: drawStyle === "stairs" ? "Stairs" : "Corridor", points: draftPoints, width: drawStyle === "stairs" ? 5 : 14, style: drawStyle };
     try { await setDoc(corridorRef, { ...corridor, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }); setFloors((previous) => previous.map((state) => state.floor.id !== currentState.floor.id ? state : { ...state, corridors: [...state.corridors, corridor] })); setSelection({ kind: "corridor", id: corridor.id }); setSaveState("Saved"); } catch { setSaveState("Unable to save"); }
     setDrawMode(false); setDraftPoints([]); setCursorPoint(null);
-  }, [currentState, draftPoints, drawMode, memoryMapId]);
+  }, [currentState, draftPoints, drawMode, drawStyle, memoryMapId]);
 
   useEffect(() => {
     saveRoomRef.current = saveRoom;
+    saveCorridorRef.current = saveCorridor;
     finishCorridorRef.current = finishCorridor;
-  }, [finishCorridor, saveRoom]);
+  }, [finishCorridor, saveCorridor, saveRoom]);
 
   const deleteCorridor = async () => {
     if (!selectedCorridor || !currentState || !db || !window.confirm(`Delete ${selectedCorridor.label}?`)) return;
@@ -219,7 +253,8 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
   };
 
   const addCorridorPoint = (event: React.MouseEvent<HTMLDivElement>) => { if (!drawMode || !canvasRef.current) return; setDraftPoints((points) => [...points, pointFromEvent(event, canvasRef.current as HTMLDivElement)]); };
-  const beginDrag = (event: React.PointerEvent<HTMLButtonElement>, roomId: string, mode: "move" | "resize") => { if (!currentState || drawMode) return; const room = currentState.rooms.find((item) => item.id === roomId); if (!room || !canvasRef.current) return; event.preventDefault(); event.stopPropagation(); const point = pointFromEvent(event.nativeEvent, canvasRef.current); setSelection({ kind: "room", id: roomId }); setDrag({ roomId, floorId: currentState.floor.id, mode, startX: point.x, startY: point.y, initial: room }); };
+  const beginDrag = (event: React.PointerEvent<HTMLButtonElement>, roomId: string, mode: "move" | "resize") => { if (!currentState || drawMode) return; const room = currentState.rooms.find((item) => item.id === roomId); if (!room || !canvasRef.current) return; event.preventDefault(); event.stopPropagation(); const point = pointFromEvent(event.nativeEvent, canvasRef.current); setSelection({ kind: "room", id: roomId }); setDrag({ kind: "room", roomId, floorId: currentState.floor.id, mode, startX: point.x, startY: point.y, initial: room }); };
+  const beginCorridorDrag = (event: React.PointerEvent<SVGGElement>, corridor: MemoryMapCorridor) => { if (!currentState || drawMode || !canvasRef.current) return; event.preventDefault(); event.stopPropagation(); const point = pointFromEvent(event.nativeEvent, canvasRef.current); setSelection({ kind: "corridor", id: corridor.id }); setDrag({ kind: "corridor", corridorId: corridor.id, floorId: currentState.floor.id, startX: point.x, startY: point.y, initial: corridor }); };
 
   const handleRoomKey = (event: React.KeyboardEvent<HTMLButtonElement>, room: MemoryMapRoom) => {
     if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); setSelection({ kind: "room", id: room.id }); void deleteRoom(); return; }
@@ -262,17 +297,17 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
   return <main className="mm-builder">
     <header className="mm-builder__topbar">
       <Link href="/dashboard" className="mm-brand mm-builder__brand" aria-label="Back to dashboard"><MemoryMapLogo size={32} variant="dark" /><MemoryMapWordmark /></Link>
-      <div className="mm-builder__identity"><strong>{map.name}</strong><span>Setup mode</span></div>
+      <div className="mm-builder__identity"><label className="mm-builder__campus-name-label" htmlFor="campus-name">Campus name</label><input id="campus-name" className="mm-builder__campus-name" value={map.name} maxLength={80} onChange={(event) => setMap((previous) => previous ? { ...previous, name: event.target.value } : previous)} onBlur={() => void saveMapName()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} aria-label="Campus name" /><span>Setup mode</span></div>
       <div className="mm-builder__floor-title"><span>{currentState.floor.name}</span><small aria-live="polite">{saveState}</small></div>
       <div className="mm-builder__actions"><button type="button" className="mm-button mm-button--outline mm-button--small" onClick={() => setModal("invite")}>Add members</button><button type="button" className="mm-button mm-button--outline mm-button--small" onClick={() => setModal("done")}>Done</button></div>
     </header>
     <div className="mm-builder__body">
-      <aside className="mm-builder__tools" aria-label="Campus builder tools"><span className="mm-builder__tools-label">Build this place</span><button type="button" onClick={() => setModal("floor")}>＋ Add floor</button><button type="button" onClick={() => void addRoom()}>＋ Add room</button><button type="button" aria-pressed={drawMode} className={drawMode ? "is-active" : ""} onClick={() => { setDrawMode(true); setDraftPoints([]); setSelection(null); }}>⌁ Add corridor</button><button type="button" onClick={() => setModal("invite")}>＋ Add members</button><button type="button" className="mm-builder__done-tool" onClick={() => void finishSetup()}>Done</button></aside>
+      <aside className="mm-builder__tools" aria-label="Campus builder tools"><span className="mm-builder__tools-label">Build this place</span><button type="button" onClick={() => setModal("floor")}>＋ Add floor</button><button type="button" onClick={() => void addRoom()}>＋ Add room</button><button type="button" onClick={() => { setDrawMode(true); setDrawStyle("stairs"); setDraftPoints([]); setSelection(null); }}>+ Add stairs</button><button type="button" aria-pressed={drawMode} className={drawMode ? "is-active" : ""} onClick={() => { setDrawMode(true); setDrawStyle("solid"); setDraftPoints([]); setSelection(null); }}>⌁ Add corridor</button><button type="button" onClick={() => setModal("invite")}>＋ Add members</button><button type="button" className="mm-builder__done-tool" onClick={() => void finishSetup()}>Done</button></aside>
       <section className={`mm-builder__workspace${drawMode ? " is-drawing" : ""}`} aria-label="Campus design workspace">
         <div className="mm-builder__floor-tabs" role="tablist" aria-label="Floors">{floors.map((state) => <button type="button" role="tab" aria-selected={state.floor.id === currentFloorId} key={state.floor.id} onClick={() => { setCurrentFloorId(state.floor.id); setSelection(null); }}>{state.floor.name}</button>)}</div>
         <div ref={canvasRef} className="mm-builder__canvas" tabIndex={0} onClick={addCorridorPoint} onDoubleClick={() => void finishCorridor()} onMouseMove={(event) => { if (drawMode && canvasRef.current) setCursorPoint(pointFromEvent(event, canvasRef.current)); }} onKeyDown={(event) => { if (drawMode && event.key === "Enter") void finishCorridor(); }}>
           <span className="mm-builder__canvas-label">{drawMode ? "Click to place points · Enter or double-click to finish · Escape to cancel" : "Ground plan · place rooms where the memories happened"}</span>
-          <svg className="mm-builder__corridors" viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`} aria-hidden="true">{currentState.corridors.map((corridor) => <g key={corridor.id} onClick={(event) => { event.stopPropagation(); if (!drawMode) setSelection({ kind: "corridor", id: corridor.id }); }} className={selection?.kind === "corridor" && selection.id === corridor.id ? "is-selected" : ""}><polyline points={corridor.points.map((point) => `${point.x},${point.y}`).join(" ")} className={`mm-builder-corridor mm-builder-corridor--${corridor.style}`} style={{ strokeWidth: corridor.width }} /><text x={corridor.points[0]?.x ?? 0} y={(corridor.points[0]?.y ?? 0) - 10}>{corridor.label}</text></g>)}{draftPolyline && <polyline points={draftPolyline} className="mm-builder-corridor mm-builder-corridor--draft" />}</svg>
+          <svg className="mm-builder__corridors" viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`} aria-hidden="true">{currentState.corridors.map((corridor) => <g key={corridor.id} onPointerDown={(event) => beginCorridorDrag(event, corridor)} onClick={(event) => { event.stopPropagation(); if (!drawMode) setSelection({ kind: "corridor", id: corridor.id }); }} className={selection?.kind === "corridor" && selection.id === corridor.id ? "is-selected" : ""}><polyline points={corridor.points.map((point) => `${point.x},${point.y}`).join(" ")} className={`mm-builder-corridor mm-builder-corridor--${corridor.style}`} style={{ strokeWidth: corridor.width }} /><text x={corridor.points[0]?.x ?? 0} y={(corridor.points[0]?.y ?? 0) - 10}>{corridor.label}</text></g>)}{draftPolyline && <polyline points={draftPolyline} className="mm-builder-corridor mm-builder-corridor--draft" />}</svg>
           {currentState.rooms.map((room) => <RoomNode key={room.id} room={room} preview={false} selected={selection?.kind === "room" && selection.id === room.id} onSelect={() => { if (!drawMode) setSelection({ kind: "room", id: room.id }); }} onPointerDown={(event, mode) => beginDrag(event, room.id, mode)} onKeyDown={(event) => handleRoomKey(event, room)} />)}
         </div>
       </section>

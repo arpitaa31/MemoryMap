@@ -1,6 +1,6 @@
 "use client";
 
-import { collection, getDocs, query, Timestamp, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, Timestamp, where } from "firebase/firestore";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -22,6 +22,8 @@ export type MemoryMapSummary = {
   memoryCount: number;
   memberCount: number;
   status: "setup" | "active";
+  isShared?: boolean;
+  ownerName?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 };
@@ -153,11 +155,15 @@ export default function DashboardClient() {
       try {
         assertFirebaseConfig();
         if (!db) throw new Error("Firestore is unavailable.");
+        const firestore = db;
         const memoryMapsQuery = query(collection(db, "memoryMaps"), where("ownerId", "==", user.uid));
-        const snapshot = await getDocs(memoryMapsQuery);
+        const [snapshot, membershipSnapshot] = await Promise.all([
+          getDocs(memoryMapsQuery),
+          getDocs(collection(db, "users", user.uid, "memoryMaps")),
+        ]);
         if (cancelled) return;
 
-        const nextMaps = snapshot.docs.map((document) => {
+        const nextMaps: MemoryMapSummary[] = snapshot.docs.map((document) => {
           const data = document.data() as Record<string, unknown>;
           return {
             id: document.id,
@@ -171,8 +177,30 @@ export default function DashboardClient() {
             status: data.status === "active" ? "active" as const : "setup" as const,
             createdAt: timestampOrUndefined(data.createdAt),
             updatedAt: timestampOrUndefined(data.updatedAt),
+            isShared: false,
           } satisfies MemoryMapSummary;
         });
+
+        const ownedIds = new Set(nextMaps.map((memoryMap) => memoryMap.id));
+        const sharedMaps = await Promise.all(membershipSnapshot.docs
+          .filter((membership) => membership.data().status === "active" && !ownedIds.has(membership.id))
+          .map(async (membership): Promise<MemoryMapSummary | null> => {
+            const document = await getDoc(doc(firestore, "memoryMaps", membership.id));
+            if (!document.exists()) return null;
+            const data = document.data() as Record<string, unknown>;
+            if (data.status !== "active" || data.ownerId === user.uid) return null;
+            return {
+              id: document.id,
+              name: typeof data.name === "string" && data.name.trim() ? data.name : "Untitled MemoryMap",
+              ownerId: typeof data.ownerId === "string" ? data.ownerId : "",
+              ownerName: typeof data.ownerName === "string" ? data.ownerName : undefined,
+              privacy: "private" as const,
+              roomCount: countOrDefault(data.roomCount, 0), memoryCount: countOrDefault(data.memoryCount, 0), memberCount: countOrDefault(data.memberCount, 1),
+              status: "active" as const, isShared: true,
+              updatedAt: timestampOrUndefined(data.updatedAt), createdAt: timestampOrUndefined(data.createdAt),
+            } satisfies MemoryMapSummary;
+          }));
+        nextMaps.push(...sharedMaps.filter((memoryMap): memoryMap is MemoryMapSummary => memoryMap !== null));
 
         nextMaps.sort((a, b) => (b.updatedAt?.toMillis() ?? 0) - (a.updatedAt?.toMillis() ?? 0));
         setMemoryMaps(nextMaps);
@@ -219,7 +247,7 @@ export default function DashboardClient() {
         </Link>
         <nav className="mm-dashboard-nav" aria-label="Dashboard navigation">
           <Link href="/dashboard" aria-current="page">Home</Link>
-          <a href="#memorymaps-title">Your MemoryMaps</a>
+          <a href="#memorymaps-title">Your campuses</a>
         </nav>
         <div className="mm-dashboard-user">
           {user.photoURL ? (
@@ -262,7 +290,7 @@ export default function DashboardClient() {
           <div className="mm-dashboard-list__heading">
             <div>
               <p className="mm-eyebrow mm-eyebrow--moss">Your archive</p>
-              <h2 id="memorymaps-title">Your MemoryMaps</h2>
+              <h2 id="memorymaps-title">Your campuses</h2>
               <p>Campuses you create will remain private unless you invite other members.</p>
             </div>
             {!mapsLoading && !mapsError && memoryMaps.length > 0 && <span className="mm-dashboard-list__count">{memoryMaps.length} {memoryMaps.length === 1 ? "campus" : "campuses"}</span>}
@@ -300,8 +328,8 @@ export default function DashboardClient() {
               {memoryMaps.map((memoryMap, index) => (
                 <Link className="mm-dashboard-map-card" key={memoryMap.id} href={`/memorymaps/${memoryMap.id}${memoryMap.status === "setup" ? "/setup" : ""}`}>
                   <div className="mm-dashboard-map-card__heading">
-                    <div><h3>{memoryMap.name}</h3>{memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}</div>
-                    <span className="mm-dashboard-private">{memoryMap.status === "setup" ? "Setup incomplete" : "Private campus"}</span>
+                    <div><h3>{memoryMap.name}</h3>{memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}{memoryMap.isShared && memoryMap.ownerName && <p>Owner: {memoryMap.ownerName}</p>}</div>
+                    <span className="mm-dashboard-private">{memoryMap.isShared ? "Shared with you" : memoryMap.status === "setup" ? "Setup incomplete" : "Private campus"}</span>
                   </div>
                   <MiniCampusPreview variant={index % 3} />
                   <div className="mm-dashboard-map-card__stats" aria-label={`${memoryMap.roomCount} rooms, ${memoryMap.memoryCount} memories, ${memoryMap.memberCount} members`}>

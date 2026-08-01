@@ -8,7 +8,7 @@ export function createInviteCode() {
 }
 
 export async function reserveInviteCode(db: Firestore) {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = createInviteCode();
     if (!(await getDoc(doc(db, "inviteCodes", code))).exists()) return code;
   }

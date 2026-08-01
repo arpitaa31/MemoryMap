@@ -50,7 +50,8 @@ export default function LoginForm() {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
       await signInWithPopup(auth, provider);
-      router.replace("/dashboard");
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.replace(next && next.startsWith("/") ? next : "/dashboard");
     } catch (error) {
       setMessage(getGoogleErrorMessage(error));
     } finally {

@@ -63,9 +63,11 @@ export async function POST(request: Request) {
 
   const memoryMapId = readTextField(formData, "memoryMapId");
   const memoryId = readTextField(formData, "memoryId");
+  const floorId = readTextField(formData, "floorId");
+  const roomId = readTextField(formData, "roomId");
   const fileEntry = formData.get("file");
 
-  if (!isMemoryResourceId(memoryMapId) || !isMemoryResourceId(memoryId)) {
+  if (!isMemoryResourceId(memoryMapId) || !isMemoryResourceId(memoryId) || !isMemoryResourceId(floorId) || !isMemoryResourceId(roomId)) {
     return imageValidationError("A valid MemoryMap and memory are required.");
   }
 
@@ -75,19 +77,21 @@ export async function POST(request: Request) {
 
   const contentType = fileEntry.type.toLowerCase();
   if (!(ALLOWED_IMAGE_TYPES as readonly string[]).includes(contentType)) {
-    return imageValidationError("Only JPEG, PNG and WebP images are supported.", 415);
+    return imageValidationError("Please choose a JPEG, PNG or WebP image.", 415);
   }
 
   if (fileEntry.size <= 0) return imageValidationError("The image file is empty.");
-  if (fileEntry.size > MAX_IMAGE_BYTES) return imageValidationError("Images must be 5 MB or smaller.", 413);
+  if (fileEntry.size > MAX_IMAGE_BYTES) return imageValidationError("This image is larger than 5 MB.", 413);
 
   const bytes = new Uint8Array(await fileEntry.arrayBuffer());
   if (!hasImageSignature(contentType, bytes)) {
-    return imageValidationError("The image content does not match its file type.", 415);
+    return imageValidationError("Please choose a JPEG, PNG or WebP image.", 415);
   }
 
   const access = await requireMemoryMapAccess(memoryMapId, authentication.request.idToken, authentication.request.uid);
-  if (!access.ok) return access.response;
+  if (!access.ok) return access.response.status === 403
+    ? NextResponse.json({ error: "You do not have permission to add images to this campus." }, { status: 403 })
+    : access.response;
 
   const path = memoryPath(memoryMapId, memoryId);
   const memory = await getFirestoreDocument(path, authentication.request.idToken);

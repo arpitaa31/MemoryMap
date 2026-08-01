@@ -54,7 +54,7 @@ export function parseRoom(snapshot: QueryDocumentSnapshot<DocumentData>): Memory
   return {
     id: snapshot.id,
     name: stringOr(data.name, "Untitled Room"),
-    type: data.type === "classroom" || data.type === "laboratory" || data.type === "library" || data.type === "auditorium" || data.type === "sports" || data.type === "office" || data.type === "canteen" ? data.type : "other",
+    type: data.type === "classroom" || data.type === "laboratory" || data.type === "library" || data.type === "auditorium" || data.type === "sports" || data.type === "office" || data.type === "canteen" || data.type === "stairs" ? data.type : "other",
     accent: data.accent === "coral" || data.accent === "green" || data.accent === "yellow" || data.accent === "teal" ? data.accent : "neutral",
     x: numberOr(data.x, 36), y: numberOr(data.y, 36), width: numberOr(data.width, 180), height: numberOr(data.height, 110), rotation,
     order: numberOr(data.order, 0), createdAt: timestampOrUndefined(data.createdAt), updatedAt: timestampOrUndefined(data.updatedAt),
@@ -68,7 +68,7 @@ export function parseCorridor(snapshot: QueryDocumentSnapshot<DocumentData>): Me
     const value = point as Record<string, unknown>;
     return typeof value.x === "number" && typeof value.y === "number" ? [{ x: value.x, y: value.y }] : [];
   }) : [];
-  return { id: snapshot.id, label: stringOr(data.label, "Corridor"), points, width: numberOr(data.width, 14), style: data.style === "dashed" ? "dashed" : "solid", createdAt: timestampOrUndefined(data.createdAt), updatedAt: timestampOrUndefined(data.updatedAt) };
+  return { id: snapshot.id, label: stringOr(data.label, "Corridor"), points, width: numberOr(data.width, 14), style: data.style === "dashed" || data.style === "stairs" ? data.style : "solid", createdAt: timestampOrUndefined(data.createdAt), updatedAt: timestampOrUndefined(data.updatedAt) };
 }
 
 export function parseMember(snapshot: QueryDocumentSnapshot<DocumentData>): MemoryMapMember {

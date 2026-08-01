@@ -7,7 +7,7 @@ export type MemoryImageUpload = {
   url: string;
   filename: string;
   size: number;
-  content_type: "image/jpeg" | "image/png" | "image/webp";
+  contentType: "image/jpeg" | "image/png" | "image/webp";
 };
 
 async function readUploadResponse(response: Response) {
@@ -35,7 +35,7 @@ function isMemoryImageUpload(value: unknown): value is MemoryImageUpload {
     && typeof payload.url === "string"
     && typeof payload.filename === "string"
     && typeof payload.size === "number"
-    && (payload.content_type === "image/jpeg" || payload.content_type === "image/png" || payload.content_type === "image/webp");
+    && (payload.contentType === "image/jpeg" || payload.contentType === "image/png" || payload.contentType === "image/webp");
 }
 
 async function getIdToken() {
@@ -44,12 +44,14 @@ async function getIdToken() {
   return user.getIdToken();
 }
 
-export async function uploadMemoryImage(file: File, memoryMapId: string, memoryId: string) {
+export async function uploadMemoryImage(file: File, memoryMapId: string, memoryId: string, floorId: string, roomId: string) {
   const idToken = await getIdToken();
   const formData = new FormData();
   formData.append("file", file);
   formData.append("memoryMapId", memoryMapId);
   formData.append("memoryId", memoryId);
+  formData.append("floorId", floorId);
+  formData.append("roomId", roomId);
 
   const response = await fetch(`/api/memorymaps/${encodeURIComponent(memoryMapId)}/images`, {
     method: "POST",

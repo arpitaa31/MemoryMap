@@ -2,9 +2,9 @@ import type { Timestamp } from "firebase/firestore";
 
 export type MemoryMapStatus = "setup" | "active";
 export type MemoryType = "incident" | "image";
-export type RoomType = "classroom" | "laboratory" | "library" | "auditorium" | "sports" | "office" | "canteen" | "other";
+export type RoomType = "classroom" | "laboratory" | "library" | "auditorium" | "sports" | "office" | "canteen" | "stairs" | "other";
 export type RoomAccent = "coral" | "green" | "yellow" | "teal" | "neutral";
-export type CorridorStyle = "solid" | "dashed";
+export type CorridorStyle = "solid" | "dashed" | "stairs";
 
 export type MemoryMapDocument = {
   id: string;
