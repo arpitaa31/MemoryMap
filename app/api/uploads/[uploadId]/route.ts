@@ -34,6 +34,9 @@ export async function DELETE(
 ) {
   const authentication = await authenticateRequest(request);
   if (!authentication.ok) return authentication.response;
+  if (authentication.request.isAnonymous) {
+    return NextResponse.json({ error: "Guest sessions cannot manage image uploads. Continue with Google to unlock photo memories." }, { status: 403 });
+  }
 
   const { uploadId } = await params;
   if (!uploadId || uploadId.length > 200 || uploadId.includes("/")) {

@@ -7,8 +7,20 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function anonymousUser() {
+      return signedIn() && request.auth.token.firebase.sign_in_provider == "anonymous";
+    }
+
+    function registeredUser() {
+      return signedIn() && !anonymousUser();
+    }
+
     function mapPath(memoryMapId) {
       return /databases/$(database)/documents/memoryMaps/$(memoryMapId);
+    }
+
+    function memberPath(memoryMapId, userId) {
+      return /databases/$(database)/documents/memoryMaps/$(memoryMapId)/members/$(userId);
     }
 
     function isExistingOwner(memoryMapId) {
@@ -22,7 +34,7 @@ service cloud.firestore {
     }
 
     function isActiveMember(memoryMapId) {
-      return signedIn() && (isExistingOwner(memoryMapId) || get(/databases/$(database)/documents/memoryMaps/$(memoryMapId)/members/$(request.auth.uid)).data.status == "active");
+      return signedIn() && (isExistingOwner(memoryMapId) || get(memberPath(memoryMapId, request.auth.uid)).data.status == "active");
     }
 
     function hasActiveInvite(code) {
@@ -31,17 +43,28 @@ service cloud.firestore {
 
     match /memoryMaps/{memoryMapId} {
       allow create: if signedIn()
-        && request.resource.data.ownerId == request.auth.uid;
+        && request.resource.data.ownerId == request.auth.uid
+        && ((anonymousUser() && request.resource.data.ownerType == "guest")
+          || (registeredUser() && request.resource.data.ownerType == "registered"));
 
       allow get: if isActiveMember(memoryMapId);
+      // Firestore evaluates this against each candidate document. The client
+      // must constrain the query with where("ownerId", "==", request.auth.uid).
       allow list: if signedIn() && resource.data.ownerId == request.auth.uid;
-      allow update: if isExistingOwner(memoryMapId)
-        || (isActiveMember(memoryMapId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["memberCount", "updatedAt"]));
+      allow update: if (isExistingOwner(memoryMapId) && request.resource.data.ownerId == request.auth.uid
+          && (!anonymousUser() || request.resource.data.ownerType == "guest"))
+        || (isActiveMember(memoryMapId)
+          && (
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(["memberCount", "updatedAt"])
+              && request.resource.data.memberCount == resource.data.memberCount + 1)
+            || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(["memoryCount", "updatedAt"])
+              && (request.resource.data.memoryCount == resource.data.memoryCount + 1 || request.resource.data.memoryCount == resource.data.memoryCount - 1))
+          ));
       allow delete: if isExistingOwner(memoryMapId);
 
       match /members/{userId} {
         allow create: if (isOwnerAfterWrite(memoryMapId) && userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.role == "owner" && request.resource.data.status == "active")
-          || (signedIn() && userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.role == "member" && request.resource.data.status == "active" && hasActiveInvite(request.resource.data.inviteCode));
+          || (registeredUser() && userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.role == "member" && request.resource.data.status == "active" && hasActiveInvite(request.resource.data.inviteCode));
 
         allow read: if isActiveMember(memoryMapId);
         allow update, delete: if isExistingOwner(memoryMapId);
@@ -66,27 +89,47 @@ service cloud.firestore {
 
       match /memories/{memoryId} {
         allow read: if isActiveMember(memoryMapId);
-        allow create: if isActiveMember(memoryMapId) && request.resource.data.createdBy == request.auth.uid && request.resource.data.type in ["incident", "image"];
+        allow create: if isActiveMember(memoryMapId)
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.type in ["incident", "image"]
+          && (!anonymousUser() || request.resource.data.type == "incident");
         allow update, delete: if isExistingOwner(memoryMapId) || (signedIn() && resource.data.createdBy == request.auth.uid);
       }
     }
 
     match /inviteCodes/{inviteCode} {
-      allow create: if signedIn()
+      allow create: if registeredUser()
         && request.resource.data.ownerId == request.auth.uid
-        && getAfter(mapPath(request.resource.data.memoryMapId)).data.ownerId == request.auth.uid;
+        && getAfter(mapPath(request.resource.data.memoryMapId)).data.ownerId == request.auth.uid
+        && getAfter(mapPath(request.resource.data.memoryMapId)).data.ownerType != "guest";
 
       // Direct document-ID checks need to be allowed for both existing and
       // non-existing codes; no collection query/list access is granted.
-      allow read: if signedIn();
+      allow read: if registeredUser();
 
-      allow update, delete: if signedIn()
+      allow update, delete: if registeredUser()
         && get(mapPath(resource.data.memoryMapId)).data.ownerId == request.auth.uid;
     }
 
     match /users/{userId}/memoryMaps/{memoryMapId} {
       allow read: if signedIn() && userId == request.auth.uid;
-      allow create, update: if signedIn() && userId == request.auth.uid && request.resource.data.memoryMapId == memoryMapId && request.resource.data.role in ["owner", "member"] && request.resource.data.status == "active";
+      allow create, update: if signedIn()
+        && userId == request.auth.uid
+        && request.resource.data.memoryMapId == memoryMapId
+        && request.resource.data.ownerId == get(mapPath(memoryMapId)).data.ownerId
+        && request.resource.data.role in ["owner", "member"]
+        && request.resource.data.status == "active"
+        && (
+          (request.resource.data.role == "owner"
+            && request.resource.data.ownerId == request.auth.uid
+            && getAfter(memberPath(memoryMapId, userId)).data.userId == request.auth.uid
+            && getAfter(memberPath(memoryMapId, userId)).data.role == "owner"
+            && getAfter(memberPath(memoryMapId, userId)).data.status == "active")
+          || (request.resource.data.role == "member"
+            && getAfter(memberPath(memoryMapId, userId)).data.userId == request.auth.uid
+            && getAfter(memberPath(memoryMapId, userId)).data.role == "member"
+            && getAfter(memberPath(memoryMapId, userId)).data.status == "active")
+        );
       allow delete: if signedIn() && userId == request.auth.uid;
     }
   }

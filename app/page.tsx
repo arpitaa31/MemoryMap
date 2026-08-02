@@ -27,7 +27,7 @@ function HeroIntro() {
       <p className="mm-eyebrow mm-eyebrow--moss">A private archive for the places you remember</p>
       <Reveal variant="mask" delay={70} as="h1" id="hero-title">Keep the places.<br />Keep the stories.</Reveal>
       <p className="mm-home-intro__copy">Map the classrooms, courts and corridors you still talk about. Invite the people who were there, then leave each story in the room where it belongs.</p>
-      <div className="mm-home-intro__actions"><Link href="/login" className="mm-button mm-button--coral">Make your MemoryMap <span aria-hidden="true">→</span></Link><a href="#demo" className="mm-button mm-button--outline">See how it works <span aria-hidden="true">↓</span></a></div>
+      <div className="mm-home-intro__actions"><Link href="/login" className="mm-button mm-button--coral">Make your MemoryMap <span aria-hidden="true">→</span></Link><Link href="/login?guest=1" className="mm-button mm-button--outline">Try the demo <span aria-hidden="true">→</span></Link><a href="#demo" className="mm-button mm-button--outline">See how it works <span aria-hidden="true">↓</span></a></div>
       <p className="mm-home-intro__trust">Private from the start <span>·</span> Only invited people <span>·</span> One campus at a time</p>
     </section>
   );

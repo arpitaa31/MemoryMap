@@ -9,6 +9,7 @@ import MemoryMapWordmark from "../../../components/MemoryMapWordmark";
 import { useAuth } from "../../../providers/AuthProvider";
 import { assertFirebaseConfig, db } from "../../../../lib/firebase/client";
 import { reserveInviteCode } from "../../../../lib/memorymaps/invite";
+import UpgradeModal from "../../../../components/UpgradeModal";
 import { parseCorridor, parseFloor, parseMember, parseMemoryMap, parseRoom } from "../../../../lib/memorymaps/data";
 import type { MemoryMapCorridor, MemoryMapDocument, MemoryMapFloor, MemoryMapMember, MemoryMapRoom, RoomAccent, RoomType } from "../../../../types/memory-map";
 
@@ -22,7 +23,7 @@ const MAX_ROOM_HEIGHT = 250;
 type FloorState = { floor: MemoryMapFloor; rooms: MemoryMapRoom[]; corridors: MemoryMapCorridor[] };
 type Selection = { kind: "room" | "corridor" | "floor"; id: string } | null;
 type DragState = { kind: "room"; roomId: string; floorId: string; mode: "move" | "resize"; startX: number; startY: number; initial: MemoryMapRoom } | { kind: "corridor"; corridorId: string; floorId: string; startX: number; startY: number; initial: MemoryMapCorridor };
-type Modal = "floor" | "invite" | "done" | null;
+type Modal = "floor" | "invite" | "done" | "upgrade" | null;
 
 const roomTypes: Array<{ value: RoomType; label: string }> = [
   { value: "classroom", label: "Classroom" }, { value: "laboratory", label: "Laboratory" }, { value: "library", label: "Library" }, { value: "auditorium", label: "Auditorium" }, { value: "sports", label: "Sports" }, { value: "office", label: "Office" }, { value: "canteen", label: "Canteen" }, { value: "stairs", label: "Stairs" }, { value: "other", label: "Other" },
@@ -188,6 +189,7 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
 
   const addFloor = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (user?.isAnonymous) { setModal("upgrade"); return; }
     const name = normaliseFloorName(floorName);
     if (name.length < 2 || name.length > 50) return;
     if (floors.some((state) => state.floor.name.toLowerCase() === name.toLowerCase())) return;
@@ -215,6 +217,7 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
 
   const addRoom = async (preset: { name: string; type: RoomType } = { name: "Untitled Room", type: "other" }) => {
     if (!currentState || !db) return;
+    if (user?.isAnonymous && roomCount >= 5) { setModal("upgrade"); return; }
     const roomRef = doc(collection(db, "memoryMaps", memoryMapId, "floors", currentState.floor.id, "rooms"));
     const room: MemoryMapRoom = { id: roomRef.id, name: preset.name, type: preset.type, accent: "neutral", x: 310 + (currentState.rooms.length % 3) * 45, y: 180 + (currentState.rooms.length % 2) * 45, width: 180, height: 110, rotation: 0, order: currentState.rooms.length };
     setSaveState("Savingâ€¦");
@@ -228,6 +231,7 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
 
   const duplicateRoom = async () => {
     if (!selectedRoom || !currentState || !db) return;
+    if (user?.isAnonymous && roomCount >= 5) { setModal("upgrade"); return; }
     const copyRef = doc(collection(db, "memoryMaps", memoryMapId, "floors", currentState.floor.id, "rooms"));
     const room = { ...selectedRoom, id: copyRef.id, name: `${selectedRoom.name} copy`, x: Math.min(CANVAS_WIDTH - selectedRoom.width, selectedRoom.x + 28), y: Math.min(CANVAS_HEIGHT - selectedRoom.height, selectedRoom.y + 28), order: currentState.rooms.length };
     try { await setDoc(copyRef, { ...room, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }); await updateDoc(mapRefFor(db, memoryMapId), { roomCount: increment(1), updatedAt: serverTimestamp() }); setFloors((previous) => previous.map((state) => state.floor.id !== currentState.floor.id ? state : { ...state, rooms: [...state.rooms, room] })); setSelection({ kind: "room", id: room.id }); } catch { setSaveState("Unable to save"); }
@@ -264,12 +268,14 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
   };
 
   const copyInvite = async () => {
+    if (user?.isAnonymous) { setModal("upgrade"); return; }
     const link = `${window.location.origin}/join/${inviteCode}`;
     try { await navigator.clipboard.writeText(link); } catch { const input = document.createElement("textarea"); input.value = link; input.setAttribute("readonly", "true"); input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select(); document.execCommand("copy"); input.remove(); }
     setInviteMessage("Invite link copied.");
   };
 
   const regenerateInvite = async () => {
+    if (user?.isAnonymous) { setModal("upgrade"); return; }
     if (!db || !map || !window.confirm("Regenerate this invite link? The old link will stop working.")) return;
     try { const nextCode = await reserveInviteCode(db); const batch = writeBatch(db); batch.update(mapRefFor(db, memoryMapId), { inviteCode: nextCode, updatedAt: serverTimestamp() }); batch.update(doc(db, "inviteCodes", map.inviteCode), { active: false, updatedAt: serverTimestamp() }); batch.set(doc(db, "inviteCodes", nextCode), { memoryMapId, active: true, createdBy: user?.uid, ownerId: user?.uid, mapName: map.name, ownerName: user?.displayName ?? null, createdAt: serverTimestamp() }); await batch.commit(); setInviteCode(nextCode); setMap((previous) => previous ? { ...previous, inviteCode: nextCode } : previous); setInviteMessage("Invite link regenerated."); } catch { setInviteMessage("We could not regenerate the invite link."); }
   };
@@ -295,6 +301,7 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
 
   const draftPolyline = [...draftPoints, ...(cursorPoint ? [cursorPoint] : [])].map((point) => `${point.x},${point.y}`).join(" ");
   return <main className="mm-builder">
+    {modal === "upgrade" && <UpgradeModal onClose={() => setModal(null)} />}
     <header className="mm-builder__topbar">
       <Link href="/dashboard" className="mm-brand mm-builder__brand" aria-label="Back to dashboard"><MemoryMapLogo size={32} variant="dark" /><MemoryMapWordmark /></Link>
       <div className="mm-builder__identity"><label className="mm-builder__campus-name-label" htmlFor="campus-name">Campus name</label><input id="campus-name" className="mm-builder__campus-name" value={map.name} maxLength={80} onChange={(event) => setMap((previous) => previous ? { ...previous, name: event.target.value } : previous)} onBlur={() => void saveMapName()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} aria-label="Campus name" /><span>Setup mode</span></div>

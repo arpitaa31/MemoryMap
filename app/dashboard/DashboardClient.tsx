@@ -10,6 +10,7 @@ import MemoryMapWordmark from "../components/MemoryMapWordmark";
 import { useAuth } from "../providers/AuthProvider";
 import { assertFirebaseConfig, auth, db } from "../../lib/firebase/client";
 import { signOut } from "firebase/auth";
+import UpgradeModal from "../../components/UpgradeModal";
 
 export type MemoryMapSummary = {
   id: string;
@@ -23,6 +24,7 @@ export type MemoryMapSummary = {
   status: "setup" | "active";
   isShared?: boolean;
   ownerName?: string;
+  ownerType?: "guest" | "registered";
   accessRole?: "owner" | "member";
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
@@ -54,6 +56,36 @@ function getInitials(displayName: string | null, email: string | null) {
 function formatUpdatedDate(timestamp?: Timestamp) {
   if (!timestamp) return "Not updated yet";
   return `Updated ${timestamp.toDate().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+}
+
+function toMemoryMapSummary(id: string, data: Record<string, unknown>, accessRole: "owner" | "member", userId: string): MemoryMapSummary {
+  return {
+    id,
+    name: typeof data.name === "string" && data.name.trim() ? data.name : "Untitled MemoryMap",
+    schoolName: typeof data.schoolName === "string" ? data.schoolName : undefined,
+    ownerId: typeof data.ownerId === "string" ? data.ownerId : userId,
+    ownerName: typeof data.ownerName === "string" ? data.ownerName : undefined,
+    ownerType: data.ownerType === "guest" ? "guest" : "registered",
+    privacy: "private",
+    roomCount: countOrDefault(data.roomCount, 0),
+    memoryCount: countOrDefault(data.memoryCount, 0),
+    memberCount: countOrDefault(data.memberCount, 1),
+    status: data.status === "active" ? "active" : "setup",
+    isShared: accessRole === "member",
+    accessRole,
+    createdAt: timestampOrUndefined(data.createdAt),
+    updatedAt: timestampOrUndefined(data.updatedAt),
+  };
+}
+
+function mergeMemoryMaps(current: MemoryMapSummary[], incoming: MemoryMapSummary[]) {
+  const maps = new Map(current.map((memoryMap) => [memoryMap.id, memoryMap]));
+  incoming.forEach((memoryMap) => {
+    const existing = maps.get(memoryMap.id);
+    if (existing?.accessRole === "owner" && memoryMap.accessRole === "member") return;
+    maps.set(memoryMap.id, memoryMap);
+  });
+  return [...maps.values()].sort((a, b) => (b.updatedAt?.toMillis() ?? 0) - (a.updatedAt?.toMillis() ?? 0));
 }
 
 function MiniCampusPreview({ variant }: { variant: number }) {
@@ -132,13 +164,17 @@ export default function DashboardClient() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const [memoryMaps, setMemoryMaps] = useState<MemoryMapSummary[]>([]);
-  const [mapsLoading, setMapsLoading] = useState(true);
-  const [mapsError, setMapsError] = useState(false);
+  const [ownedMapsLoading, setOwnedMapsLoading] = useState(true);
+  const [sharedMapsLoading, setSharedMapsLoading] = useState(true);
+  const [ownedMapsError, setOwnedMapsError] = useState(false);
+  const [sharedMapsError, setSharedMapsError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isUpgradeOpen, setIsUpgradeOpen] = useState(false);
   const [signOutError, setSignOutError] = useState("");
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [campusFilter, setCampusFilter] = useState<"all" | "owned" | "shared" | "setup">("all");
+  const mapsLoading = ownedMapsLoading || sharedMapsLoading;
 
   useEffect(() => {
     if (loading) return;
@@ -153,54 +189,74 @@ export default function DashboardClient() {
     let cancelled = false;
 
     const loadMemoryMaps = async () => {
-      let stage = "configuration";
-      const logFailure = (error: unknown) => {
+      const logFailure = (stage: string, error: unknown) => {
         const errorRecord = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : null;
         const code = errorRecord?.code !== undefined ? String(errorRecord.code) : "unknown";
         const message = typeof errorRecord?.message === "string" ? errorRecord.message : error instanceof Error ? error.message : String(error);
         console.error("Dashboard campus load failed", { stage, code, message });
       };
+
+      const firestore = db;
       try {
         assertFirebaseConfig();
-        if (!db) throw new Error("Firestore is unavailable.");
-        const firestore = db;
-        const ownedQuery = query(collection(firestore, "memoryMaps"), where("ownerId", "==", user.uid));
-        stage = "owned campuses query";
-        let ownedSnapshot;
-        try { ownedSnapshot = await getDocs(ownedQuery); } catch (error) { logFailure(error); if (!cancelled) { setMapsError(true); setMapsLoading(false); } return; }
-        if (cancelled) return;
+        if (!firestore) throw new Error("Firestore is unavailable.");
+      } catch (error) {
+        logFailure("configuration", error);
+        if (!cancelled) {
+          setOwnedMapsError(true);
+          setSharedMapsError(true);
+          setOwnedMapsLoading(false);
+          setSharedMapsLoading(false);
+        }
+        return;
+      }
 
-        const ownedMaps: MemoryMapSummary[] = ownedSnapshot.docs.map((document) => {
-          const data = document.data() as Record<string, unknown>;
-          return { id: document.id, name: typeof data.name === "string" && data.name.trim() ? data.name : "Untitled MemoryMap", schoolName: typeof data.schoolName === "string" ? data.schoolName : undefined, ownerId: typeof data.ownerId === "string" ? data.ownerId : user.uid, privacy: "private" as const, roomCount: countOrDefault(data.roomCount, 0), memoryCount: countOrDefault(data.memoryCount, 0), memberCount: countOrDefault(data.memberCount, 1), status: data.status === "active" ? "active" as const : "setup" as const, createdAt: timestampOrUndefined(data.createdAt), updatedAt: timestampOrUndefined(data.updatedAt), isShared: false, accessRole: "owner" as const } satisfies MemoryMapSummary;
-        });
-        setMemoryMaps(ownedMaps);
-        setMapsError(false);
-        setMapsLoading(false);
+      const loadOwnedMaps = async () => {
+        try {
+          const ownedQuery = query(collection(firestore, "memoryMaps"), where("ownerId", "==", user.uid));
+          const ownedSnapshot = await getDocs(ownedQuery);
+          const ownedMaps = ownedSnapshot.docs.map((document) => toMemoryMapSummary(document.id, document.data() as Record<string, unknown>, "owner", user.uid));
+          if (!cancelled) {
+            setMemoryMaps((current) => mergeMemoryMaps(current, ownedMaps));
+            setOwnedMapsError(false);
+          }
+        } catch (error) {
+          logFailure("owned campuses query", error);
+          if (!cancelled) setOwnedMapsError(true);
+        } finally {
+          if (!cancelled) setOwnedMapsLoading(false);
+        }
+      };
 
-        stage = "shared membership index";
-        let membershipSnapshot;
-        try { membershipSnapshot = await getDocs(collection(firestore, "users", user.uid, "memoryMaps")); } catch (error) { logFailure(error); return; }
-        if (cancelled) return;
-
-        stage = "shared campus documents";
-        const ownedIds = new Set(ownedMaps.map((memoryMap) => memoryMap.id));
-        const sharedMaps = await Promise.all(membershipSnapshot.docs.filter((membership) => membership.data().status === "active" && !ownedIds.has(membership.id)).map(async (membership): Promise<MemoryMapSummary | null> => {
-          try {
+      const loadSharedMaps = async () => {
+        try {
+          const membershipSnapshot = await getDocs(collection(firestore, "users", user.uid, "memoryMaps"));
+          const memberships = membershipSnapshot.docs.filter((membership) => {
+            const data = membership.data() as Record<string, unknown>;
+            return data.role === "member" && data.status === "active";
+          });
+          const results = await Promise.allSettled(memberships.map(async (membership) => {
             const document = await getDoc(doc(firestore, "memoryMaps", membership.id));
             if (!document.exists()) return null;
             const data = document.data() as Record<string, unknown>;
-            if (data.status !== "active" || data.ownerId === user.uid) return null;
-            return { id: document.id, name: typeof data.name === "string" && data.name.trim() ? data.name : "Untitled MemoryMap", ownerId: typeof data.ownerId === "string" ? data.ownerId : "", ownerName: typeof data.ownerName === "string" ? data.ownerName : undefined, privacy: "private" as const, roomCount: countOrDefault(data.roomCount, 0), memoryCount: countOrDefault(data.memoryCount, 0), memberCount: countOrDefault(data.memberCount, 1), status: "active" as const, isShared: true, accessRole: "member" as const, updatedAt: timestampOrUndefined(data.updatedAt), createdAt: timestampOrUndefined(data.createdAt) } satisfies MemoryMapSummary;
-          } catch (error) { logFailure(error); return null; }
-        }));
-        const merged = [...ownedMaps, ...sharedMaps.filter((memoryMap): memoryMap is MemoryMapSummary => memoryMap !== null)];
-        merged.sort((a, b) => (b.updatedAt?.toMillis() ?? 0) - (a.updatedAt?.toMillis() ?? 0));
-        setMemoryMaps(merged);
-      } catch (error) {
-        logFailure(error);
-        if (!cancelled) { setMapsError(true); setMapsLoading(false); }
-      }
+            if (data.status !== "active" || typeof data.ownerId !== "string" || data.ownerId === user.uid) return null;
+            return toMemoryMapSummary(document.id, data, "member", user.uid);
+          }));
+          const sharedMaps = results.filter((result): result is PromiseFulfilledResult<MemoryMapSummary | null> => result.status === "fulfilled").map((result) => result.value).filter((memoryMap): memoryMap is MemoryMapSummary => memoryMap !== null);
+          if (!cancelled) {
+            setMemoryMaps((current) => mergeMemoryMaps(current, sharedMaps));
+            setSharedMapsError(results.some((result) => result.status === "rejected"));
+          }
+          results.forEach((result) => { if (result.status === "rejected") logFailure("shared campus document", result.reason); });
+        } catch (error) {
+          logFailure("shared membership index", error);
+          if (!cancelled) setSharedMapsError(true);
+        } finally {
+          if (!cancelled) setSharedMapsLoading(false);
+        }
+      };
+
+      await Promise.all([loadOwnedMaps(), loadSharedMaps()]);
     };
     void loadMemoryMaps();
     return () => {
@@ -225,14 +281,22 @@ export default function DashboardClient() {
   if (loading) return <DashboardLoadingState message="Checking your session…" />;
   if (!user) return <DashboardLoadingState message="Redirecting to sign in…" />;
 
-  const displayName = user.displayName || "MemoryMap member";
-  const initials = getInitials(user.displayName, user.email);
-  const userHasVisibleName = Boolean(user.displayName || user.email);
+  const isGuest = user.isAnonymous === true;
+  const displayName = isGuest ? "Guest" : user.displayName || "MemoryMap member";
+  const initials = isGuest ? "G" : getInitials(user.displayName, user.email);
+  const userHasVisibleName = !isGuest && Boolean(user.displayName || user.email);
   const ownedCount = memoryMaps.filter((memoryMap) => !memoryMap.isShared).length;
   const sharedCount = memoryMaps.filter((memoryMap) => memoryMap.isShared).length;
   const totalRooms = memoryMaps.reduce((sum, memoryMap) => sum + memoryMap.roomCount, 0);
   const totalMemories = memoryMaps.reduce((sum, memoryMap) => sum + memoryMap.memoryCount, 0);
   const visibleMaps = memoryMaps.filter((memoryMap) => campusFilter === "all" || (campusFilter === "owned" && !memoryMap.isShared) || (campusFilter === "shared" && memoryMap.isShared) || (campusFilter === "setup" && !memoryMap.isShared && memoryMap.status === "setup"));
+  const openCreate = () => {
+    if (isGuest && memoryMaps.some((memoryMap) => memoryMap.accessRole === "owner")) {
+      setIsUpgradeOpen(true);
+      return;
+    }
+    setIsCreateOpen(true);
+  };
 
   return (
     <main className="mm-dashboard-page">
@@ -253,8 +317,8 @@ export default function DashboardClient() {
             <span className="mm-dashboard-user__initials" aria-hidden={userHasVisibleName}>{initials}</span>
           )}
           <div className="mm-dashboard-user__details">
-            <strong>{displayName}</strong>
-            {user.email && <span>{user.email}</span>}
+            <strong>{isGuest ? "Guest session" : displayName}</strong>
+            {!isGuest && user.email && <span>{user.email}</span>}
           </div>
           <button type="button" className="mm-dashboard-signout" onClick={handleSignOut} disabled={isSigningOut} aria-busy={isSigningOut} aria-label={isSigningOut ? "Signing out" : "Sign out"}>
             {isSigningOut ? "Signing out…" : "Sign out"}
@@ -266,10 +330,12 @@ export default function DashboardClient() {
       <div className="mm-dashboard-main mm-frame">
         <section className="mm-dashboard-intro" aria-labelledby="dashboard-title">
           <p className="mm-eyebrow mm-eyebrow--moss">Your private archive</p>
-          <h1 id="dashboard-title">Welcome back, {getFirstName(user.displayName, user.email)}.</h1>
-          <p>Your private campuses and shared memories live here.</p>
+          <h1 id="dashboard-title">{isGuest ? "Welcome, Guest." : `Welcome back, ${getFirstName(user.displayName, user.email)}.`}</h1>
+          <p>{isGuest ? "Explore your temporary campus and see how MemoryMap works." : "Your private campuses and shared memories live here."}</p>
           <span>Build new campuses, revisit shared places and continue preserving memories.</span>
         </section>
+
+        {isGuest && <section className="mm-guest-banner" aria-label="Guest session limits"><strong>Guest session</strong><p>Your guest campus is saved in this browser session. Sign in with Google to keep it permanently and unlock images, invitations and shared campuses.</p><button type="button" className="mm-button mm-button--outline mm-button--small" onClick={() => setIsUpgradeOpen(true)}>Continue with Google</button></section>}
 
         <section className="mm-dashboard-summary" aria-label="Archive summary">
           {[['Campuses owned', ownedCount], ['Shared with you', sharedCount], ['Total rooms', totalRooms], ['Total memories', totalMemories]].map(([label, value]) => <div className="mm-dashboard-summary__item" key={String(label)}><span>{label}</span><strong>{mapsLoading ? "—" : value}</strong></div>)}
@@ -280,7 +346,7 @@ export default function DashboardClient() {
             <p className="mm-eyebrow mm-eyebrow--ochre">Start with a place</p>
             <h2 id="create-memorymap-title">Create your MemoryMap</h2>
             <p>Build a private campus, add its familiar rooms and invite the people who shared those places with you.</p>
-            <button type="button" className="mm-button mm-button--coral" onClick={() => setIsCreateOpen(true)}>Start building</button>
+            <button type="button" className="mm-button mm-button--coral" onClick={openCreate}>Start building</button>
           </div>
           <CreateCampusPreview />
         </section>
@@ -292,9 +358,12 @@ export default function DashboardClient() {
               <h2 id="memorymaps-title">Your campuses</h2>
               <p>Places you own and private campuses shared with you.</p>
             </div>
-            {!mapsLoading && !mapsError && memoryMaps.length > 0 && <span className="mm-dashboard-list__count">{memoryMaps.length} {memoryMaps.length === 1 ? "campus" : "campuses"}</span>}
+            {!mapsLoading && memoryMaps.length > 0 && <span className="mm-dashboard-list__count">{memoryMaps.length} {memoryMaps.length === 1 ? "campus" : "campuses"}</span>}
           </div>
           <div className="mm-dashboard-filters" role="tablist" aria-label="Campus filters">{([['all', 'All'], ['owned', 'Owned'], ['shared', 'Shared with you'], ['setup', 'Setup incomplete']] as const).map(([value, label]) => <button type="button" role="tab" key={value} aria-selected={campusFilter === value} onClick={() => setCampusFilter(value)}>{label}</button>)}</div>
+
+          {ownedMapsError && <p className="mm-auth-message mm-auth-message--error" role="alert">Owned campuses could not be loaded. <button type="button" className="mm-dashboard-inline-retry" onClick={() => { setOwnedMapsLoading(true); setSharedMapsLoading(true); setOwnedMapsError(false); setSharedMapsError(false); setRetryCount((count) => count + 1); }}>Try again</button></p>}
+          {sharedMapsError && <p className="mm-auth-message mm-auth-message--error" role="alert">Shared campuses could not be loaded. <button type="button" className="mm-dashboard-inline-retry" onClick={() => { setOwnedMapsLoading(true); setSharedMapsLoading(true); setOwnedMapsError(false); setSharedMapsError(false); setRetryCount((count) => count + 1); }}>Try again</button></p>}
 
           {mapsLoading && (
             <div className="mm-dashboard-list__loading" aria-busy="true">
@@ -304,32 +373,32 @@ export default function DashboardClient() {
             </div>
           )}
 
-          {!mapsLoading && mapsError && (
+          {!mapsLoading && ownedMapsError && sharedMapsError && (
             <div className="mm-dashboard-empty mm-dashboard-empty--error" role="alert">
               <div><h3>We could not load your MemoryMaps.</h3><p>Your account is still signed in. Try loading your campuses again.</p></div>
-              <button type="button" className="mm-button mm-button--outline" onClick={() => { setMapsLoading(true); setMapsError(false); setRetryCount((count) => count + 1); }}>Try again</button>
+              <button type="button" className="mm-button mm-button--outline" onClick={() => { setOwnedMapsLoading(true); setSharedMapsLoading(true); setOwnedMapsError(false); setSharedMapsError(false); setRetryCount((count) => count + 1); }}>Try again</button>
             </div>
           )}
 
-          {!mapsLoading && !mapsError && memoryMaps.length === 0 && (
+          {!mapsLoading && !ownedMapsError && !sharedMapsError && memoryMaps.length === 0 && (
             <div className="mm-dashboard-empty">
               <div className="mm-dashboard-empty__copy">
                 <p className="mm-eyebrow mm-eyebrow--ochre">A blank place to begin</p>
                 <h3>No MemoryMaps yet.</h3>
                 <p>Create your first private campus and begin saving the places your group will want to revisit later.</p>
-                <button type="button" className="mm-button mm-button--coral" onClick={() => setIsCreateOpen(true)}>Create your first MemoryMap</button>
+                <button type="button" className="mm-button mm-button--coral" onClick={openCreate}>Create your first MemoryMap</button>
               </div>
               <EmptyCampusIllustration />
             </div>
           )}
 
-          {!mapsLoading && !mapsError && memoryMaps.length > 0 && (
+          {!mapsLoading && memoryMaps.length > 0 && (
             <div className="mm-dashboard-map-grid">
               {visibleMaps.map((memoryMap, index) => (
-                <Link className="mm-dashboard-map-card" key={memoryMap.id} href={`/memorymaps/${memoryMap.id}${memoryMap.status === "setup" ? "/setup" : ""}`}>
+                <Link className="mm-dashboard-map-card" key={memoryMap.id} href={`/memorymaps/${memoryMap.id}${memoryMap.accessRole === "owner" && memoryMap.status === "setup" ? "/setup" : ""}`}>
                   <div className="mm-dashboard-map-card__heading">
-                    <div><h3>{memoryMap.name}</h3>{memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}{memoryMap.isShared && memoryMap.ownerName && <p>Owner: {memoryMap.ownerName}</p>}</div>
-                    <span className="mm-dashboard-private">{memoryMap.isShared ? "Shared with you" : memoryMap.status === "setup" ? "Setup incomplete" : "Private campus"}</span>
+                    <div><h3>{memoryMap.name}</h3>{memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}{memoryMap.isShared && <p>Owner: {memoryMap.ownerName || "MemoryMap owner"}</p>}</div>
+                    <span className="mm-dashboard-private">{memoryMap.isShared ? "Shared with you" : "Owner"}</span>
                   </div>
                   <MiniCampusPreview variant={index % 3} />
                   <div className="mm-dashboard-map-card__stats" aria-label={`${memoryMap.roomCount} rooms, ${memoryMap.memoryCount} memories, ${memoryMap.memberCount} members`}>
@@ -347,6 +416,7 @@ export default function DashboardClient() {
         {signOutError && <p className="mm-auth-message mm-auth-message--error mm-dashboard-signout-message" role="alert" aria-live="polite">{signOutError}</p>}
       </div>
       <CreateMemoryMapModal open={isCreateOpen} user={user} onClose={() => setIsCreateOpen(false)} />
+      {isUpgradeOpen && <UpgradeModal onClose={() => setIsUpgradeOpen(false)} />}
     </main>
   );
 }

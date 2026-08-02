@@ -11,6 +11,7 @@ import { assertFirebaseConfig, db } from "../../../lib/firebase/client";
 import { parseCorridor, parseFloor, parseMemory, parseMemoryMap, parseRoom } from "../../../lib/memorymaps/data";
 import { deleteMemoryImage, uploadMemoryImage } from "../../../lib/uploads/client";
 import { reserveInviteCode } from "../../../lib/memorymaps/invite";
+import UpgradeModal from "../../../components/UpgradeModal";
 import type { MemoryDocument, MemoryMapDocument, MemoryMapFloor, MemoryMapRoom, MemoryMapCorridor } from "../../../types/memory-map";
 
 type FloorData = { floor: MemoryMapFloor; rooms: MemoryMapRoom[]; corridors: MemoryMapCorridor[] };
@@ -32,6 +33,8 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteMessage, setInviteMessage] = useState("");
+  const [incidentCount, setIncidentCount] = useState(0);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const imagePreview = useMemo(() => imageFile ? URL.createObjectURL(imageFile) : null, [imageFile]);
 
@@ -82,7 +85,10 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
         const roomMemories = snapshot.docs.map(parseMemory)
           .filter((memory) => memory.roomId === selectedRoom.id)
           .sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
-        if (!cancelled) setMemories(roomMemories);
+        if (!cancelled) {
+          setMemories(roomMemories);
+          setIncidentCount(snapshot.docs.map(parseMemory).filter((memory) => memory.type === "incident").length);
+        }
       } catch { if (!cancelled) setMemories([]); }
     };
     void loadMemories();
@@ -92,6 +98,10 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
   const addIncident = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!db || !user || !current || !selectedRoom) return;
+    if (user.isAnonymous && incidentCount >= 3) {
+      setUpgradeOpen(true);
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const title = String(form.get("title") ?? "").trim();
     const description = String(form.get("description") ?? "").trim();
@@ -103,6 +113,7 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
       await updateDoc(doc(db, "memoryMaps", memoryMapId), { memoryCount: increment(1), updatedAt: serverTimestamp() });
       const saved = await getDoc(memoryRef);
       if (saved.exists()) setMemories((previous) => [parseMemory(saved), ...previous]);
+      if (user.isAnonymous) setIncidentCount((count) => count + 1);
       setIncidentOpen(false); setMap((previous) => previous ? { ...previous, memoryCount: previous.memoryCount + 1 } : previous);
     } catch { setError("We could not save that incident. Please try again."); }
     finally { setSaving(false); }
@@ -116,7 +127,7 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
   };
 
   const regenerateInvite = async () => {
-    if (!db || !map || map.ownerId !== user?.uid || !window.confirm("Regenerate this invite link? The old link will stop working.")) return;
+    if (!db || !map || user?.isAnonymous || map.ownerId !== user?.uid || !window.confirm("Regenerate this invite link? The old link will stop working.")) return;
     try { const nextCode = await reserveInviteCode(db); const batch = writeBatch(db); batch.update(doc(db, "memoryMaps", memoryMapId), { inviteCode: nextCode, updatedAt: serverTimestamp() }); batch.update(doc(db, "inviteCodes", map.inviteCode), { active: false, updatedAt: serverTimestamp() }); batch.set(doc(db, "inviteCodes", nextCode), { memoryMapId, active: true, createdBy: user.uid, ownerId: user.uid, mapName: map.name, ownerName: user.displayName ?? null, createdAt: serverTimestamp() }); await batch.commit(); setMap((previous) => previous ? { ...previous, inviteCode: nextCode } : previous); setInviteMessage("Invite link regenerated"); } catch { setInviteMessage("We could not regenerate the invite link."); }
   };
 
@@ -128,6 +139,7 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
       await deleteDoc(doc(db, "memoryMaps", memoryMapId, "memories", memory.id));
       await updateDoc(doc(db, "memoryMaps", memoryMapId), { memoryCount: increment(-1), updatedAt: serverTimestamp() });
       setMemories((previous) => previous.filter((item) => item.id !== memory.id));
+      if (user.isAnonymous && memory.type === "incident") setIncidentCount((count) => Math.max(0, count - 1));
       setMap((previous) => previous ? { ...previous, memoryCount: Math.max(0, previous.memoryCount - 1) } : previous);
     } catch { setError("We could not delete that memory. Please try again."); }
     finally { setSaving(false); }
@@ -139,6 +151,10 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
   const addImage = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!db || !user || !current || !selectedRoom) return;
+    if (user.isAnonymous) {
+      setUpgradeOpen(true);
+      return;
+    }
     const form = new FormData(event.currentTarget);
     const file = imageFile;
     const title = String(form.get("title") ?? "").trim();
@@ -160,7 +176,8 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
   };
 
   return <main className="mm-viewer">
-    <header className="mm-viewer__topbar"><div className="mm-viewer__nav-grid"><div className="mm-viewer__left-zone"><Link href="/dashboard" className="mm-brand mm-viewer__brand" aria-label="Back to dashboard"><MemoryMapLogo size={38} variant="light" /><MemoryMapWordmark /></Link><div className="mm-viewer__campus"><strong>{map.name}</strong><span>Private campus</span></div></div><div className="mm-viewer__floor-control"><span>FLOOR</span><div className="mm-viewer__floor-tabs" role="tablist" aria-label="Campus floors">{floors.map((item) => <button type="button" role="tab" key={item.floor.id} aria-selected={item.floor.id === current.floor.id} onClick={() => { setFloorId(item.floor.id); setRoomId(null); }}>{item.floor.name}</button>)}</div></div><div className="mm-viewer__actions">{map.ownerId === user?.uid && <button type="button" className="mm-viewer__invite" onClick={() => { setInviteMessage(""); setInviteOpen(true); }}>Invite</button>}{map.ownerId === user?.uid && <Link href={`/memorymaps/${memoryMapId}/setup`} className="mm-viewer__link mm-viewer__edit">Edit campus</Link>}<Link href="/dashboard" className="mm-viewer__link mm-viewer__dashboard">Dashboard</Link><span className="mm-viewer__avatar" aria-label="Account">{(user?.displayName || user?.email || "MM").slice(0, 2).toUpperCase()}</span></div></div></header>
+    {upgradeOpen && <UpgradeModal onClose={() => setUpgradeOpen(false)} />}
+    <header className="mm-viewer__topbar"><div className="mm-viewer__nav-grid"><div className="mm-viewer__left-zone"><Link href="/dashboard" className="mm-brand mm-viewer__brand" aria-label="Back to dashboard"><MemoryMapLogo size={38} variant="light" /><MemoryMapWordmark /></Link><div className="mm-viewer__campus"><strong>{map.name}</strong><span>Private campus</span></div></div><div className="mm-viewer__floor-control"><span>FLOOR</span><div className="mm-viewer__floor-tabs" role="tablist" aria-label="Campus floors">{floors.map((item) => <button type="button" role="tab" key={item.floor.id} aria-selected={item.floor.id === current.floor.id} onClick={() => { setFloorId(item.floor.id); setRoomId(null); }}>{item.floor.name}</button>)}</div></div><div className="mm-viewer__actions">{map.ownerId === user?.uid && !user.isAnonymous && <button type="button" className="mm-viewer__invite" onClick={() => { setInviteMessage(""); setInviteOpen(true); }}>Invite</button>}{map.ownerId === user?.uid && <Link href={`/memorymaps/${memoryMapId}/setup`} className="mm-viewer__link mm-viewer__edit">Edit campus</Link>}<Link href="/dashboard" className="mm-viewer__link mm-viewer__dashboard">Dashboard</Link><span className="mm-viewer__avatar" aria-label="Account">{user?.isAnonymous ? "G" : (user?.displayName || user?.email || "MM").slice(0, 2).toUpperCase()}</span></div></div></header>
 
     <section className="mm-viewer__layout"><div className="mm-viewer__map" aria-label={`${current.floor.name} rooms`}><h1>{current.floor.name}</h1><div className="mm-viewer__canvas"><svg viewBox="0 0 960 560" aria-hidden="true">{current.corridors.map((corridor) => <polyline key={corridor.id} points={corridor.points.map((point) => `${point.x},${point.y}`).join(" ")} className={`mm-viewer-corridor mm-viewer-corridor--${corridor.style}`} style={{ strokeWidth: corridor.width }} />)}</svg>{current.rooms.map((room) => <button type="button" key={room.id} className={`mm-viewer-room mm-viewer-room--${room.accent}${room.id === roomId ? " is-selected" : ""}`} style={{ left: `${room.x}px`, top: `${room.y}px`, width: `${room.width}px`, height: `${room.height}px` }} aria-pressed={room.id === roomId} onClick={() => setRoomId(room.id)}><strong>{room.name}</strong><small>{room.type}</small></button>)}</div></div>{selectedRoom && <aside className="mm-viewer__panel" aria-label={`${selectedRoom.name} memories`}><button type="button" className="mm-viewer__close" onClick={() => setRoomId(null)} aria-label="Close room memories">×</button><p className="mm-eyebrow mm-eyebrow--yellow">Room memories</p><h2>{selectedRoom.name}</h2><p>{memories.length} memories connected to this place.</p><div className="mm-viewer__actions"><button type="button" className="mm-button mm-button--outline" onClick={() => { setImageError(""); setImageOpen(true); }}>Add image</button><button type="button" className="mm-button mm-button--coral" onClick={() => setIncidentOpen(true)}>Add incident</button></div><div className="mm-viewer__timeline">{memories.length === 0 ? <p className="mm-viewer__empty">No memories here yet. Add the first incident connected to this room.</p> : memories.map((memory) => <article key={memory.id}>{memory.type === "image" && memory.imageUrl && <button type="button" className="mm-memory-thumb-button" onClick={() => setLightboxUrl(memory.imageUrl)} aria-label={`Open larger image for ${memory.title}`}><img className="mm-memory-thumb" src={memory.imageUrl} alt="" /></button>}<small>{memory.eventDate ? memory.eventDate.toDate().toLocaleDateString() : "Undated memory"}</small><h3>{memory.title}</h3><p>{memory.description}</p><span>{memory.creatorName || "MemoryMap member"}</span>{map.ownerId === user?.uid && <button type="button" className="mm-memory-delete" onClick={() => void deleteMemory(memory)} disabled={saving}>Delete</button>}</article>)}</div></aside>}</section>
     {incidentOpen && <div className="mm-viewer-modal" role="dialog" aria-modal="true" aria-labelledby="incident-title"><form onSubmit={addIncident}><p className="mm-eyebrow mm-eyebrow--yellow">Add to {selectedRoom.name}</p><h2 id="incident-title">What happened here?</h2><label>Title<input name="title" required minLength={2} maxLength={100} autoFocus /></label><label>What happened?<textarea name="description" required minLength={2} maxLength={3000} rows={5} /></label><label>Date<input name="date" type="date" /></label><div className="mm-viewer-modal__actions"><button type="button" className="mm-button mm-button--outline" onClick={() => setIncidentOpen(false)}>Cancel</button><button type="submit" className="mm-button mm-button--coral" disabled={saving}>{saving ? "Savingâ€¦" : "Save incident"}</button></div></form></div>}

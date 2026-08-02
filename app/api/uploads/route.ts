@@ -53,6 +53,9 @@ function imageValidationError(message: string, status = 400) {
 export async function POST(request: Request) {
   const authentication = await authenticateRequest(request);
   if (!authentication.ok) return authentication.response;
+  if (authentication.request.isAnonymous) {
+    return NextResponse.json({ error: "Guest sessions cannot upload images. Continue with Google to unlock photo memories." }, { status: 403 });
+  }
 
   let formData: FormData;
   try {

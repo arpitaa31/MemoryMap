@@ -12,6 +12,7 @@ export type MemoryMapDocument = {
   ownerId: string;
   ownerName: string | null;
   ownerEmail: string | null;
+  ownerType?: "guest" | "registered";
   privacy: "private";
   status: MemoryMapStatus;
   inviteCode: string;

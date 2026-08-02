@@ -40,6 +40,7 @@ export function parseMemoryMap(snapshot: DocumentSnapshot<DocumentData>): Memory
     ownerId: stringOr(data.ownerId, ""),
     ownerName: nullableString(data.ownerName),
     ownerEmail: nullableString(data.ownerEmail),
+    ownerType: data.ownerType === "guest" ? "guest" : "registered",
     privacy: "private",
     status: data.status === "active" ? "active" : "setup",
     inviteCode: stringOr(data.inviteCode, ""),

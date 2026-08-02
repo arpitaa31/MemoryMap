@@ -1,6 +1,6 @@
 "use client";
 
-import { collection, deleteDoc, doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDocs, query, serverTimestamp, setDoc, where } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -92,8 +92,15 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
         throw identityError;
       }
       if (!db || db.app !== auth.app) throw new Error("Firestore is unavailable.");
+      const isGuest = user.isAnonymous === true;
+      if (isGuest) {
+        const existingGuestMaps = await getDocs(query(collection(db, "memoryMaps"), where("ownerId", "==", user.uid)));
+        if (existingGuestMaps.size > 0) {
+          throw Object.assign(new Error("Guest campus limit reached"), { code: "guest-campus-limit" });
+        }
+      }
       failedOperation = "invite code lookup";
-      const inviteCode = await reserveInviteCode(db);
+      const inviteCode = isGuest ? "" : await reserveInviteCode(db);
       const memoryMapId = doc(collection(db, "memoryMaps")).id;
       const floorId = doc(collection(db, "memoryMaps", memoryMapId, "floors")).id;
       const floorRef = doc(db, "memoryMaps", memoryMapId, "floors", floorId);
@@ -103,6 +110,7 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
         ownerId: auth.currentUser.uid,
         ownerName: auth.currentUser.displayName ?? null,
         ownerEmail: auth.currentUser.email ?? null,
+        ownerType: isGuest ? "guest" : "registered",
         privacy: "private",
         status: "setup",
         roomCount: 0,
@@ -120,11 +128,18 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
         status: "active",
         joinedAt: timestamp,
       };
+      const ownerIndexData = {
+        memoryMapId,
+        role: "owner",
+        status: "active",
+        ownerId: user.uid,
+        joinedAt: timestamp,
+      };
       const floorData = { name: "Ground Floor", order: 0, createdAt: timestamp, updatedAt: timestamp };
       console.log("Create MemoryMap diagnostics", { authUserExists: Boolean(auth.currentUser), contextUserExists: Boolean(user), authUid: auth.currentUser?.uid ?? null, contextUid: user?.uid ?? null, firebaseProjectId: auth.app.options.projectId, firestoreProjectId: db.app.options.projectId, ownerIdBeingWritten: memoryMapData.ownerId });
 
       if (db.app.options.projectId !== "memorymap-bab33") throw new Error("Unexpected Firebase project.");
-      if (memoryMapData.ownerId !== user.uid || memberData.userId !== user.uid || memberData.role !== "owner" || memberData.status !== "active") throw new Error("Invalid MemoryMap ownership payload.");
+      if (memoryMapData.ownerId !== user.uid || memberData.userId !== user.uid || memberData.role !== "owner" || memberData.status !== "active" || ownerIndexData.ownerId !== user.uid || ownerIndexData.role !== "owner" || ownerIndexData.status !== "active") throw new Error("Invalid MemoryMap ownership payload.");
 
       failedOperation = "MemoryMap write";
       try {
@@ -146,19 +161,33 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
         throw Object.assign(new Error("Owner membership creation failed"), { code: "owner-membership-failed", cause: error });
       }
 
+      failedOperation = "Owner membership index write";
+      try {
+        await setDoc(doc(db, "users", user.uid, "memoryMaps", memoryMapId), ownerIndexData);
+        console.log("Owner membership index created");
+      } catch (error) {
+        console.error("Owner membership index creation failed", error);
+        await deleteDoc(doc(db, "memoryMaps", memoryMapId, "members", user.uid)).catch(() => undefined);
+        await deleteDoc(doc(db, "memoryMaps", memoryMapId)).catch(() => undefined);
+        throw Object.assign(new Error("Owner membership index creation failed"), { code: "owner-index-failed", cause: error });
+      }
+
       failedOperation = "Initial floor write";
       try {
         await setDoc(floorRef, floorData);
         console.log("Ground Floor created");
       } catch (error) {
         console.error("Ground Floor creation failed", error);
+        await deleteDoc(doc(db, "users", user.uid, "memoryMaps", memoryMapId)).catch(() => undefined);
         await deleteDoc(doc(db, "memoryMaps", memoryMapId, "members", user.uid)).catch(() => undefined);
         await deleteDoc(doc(db, "memoryMaps", memoryMapId)).catch(() => undefined);
         throw Object.assign(new Error("Ground Floor creation failed"), { code: "ground-floor-failed", cause: error });
       }
 
       await setDoc(doc(db, "memoryMaps", memoryMapId), { inviteCode, updatedAt: serverTimestamp() }, { merge: true });
-      await setDoc(doc(db, "inviteCodes", inviteCode), { memoryMapId, active: true, createdBy: user.uid, ownerId: user.uid, mapName: trimmedName, ownerName: user.displayName ?? null, createdAt: timestamp });
+      if (!isGuest) {
+        await setDoc(doc(db, "inviteCodes", inviteCode), { memoryMapId, active: true, createdBy: user.uid, ownerId: user.uid, mapName: trimmedName, ownerName: user.displayName ?? null, createdAt: timestamp });
+      }
       router.push(`/memorymaps/${memoryMapId}/setup`);
     } catch (error) {
       console.error("MemoryMap creation failed:", error);
@@ -166,7 +195,7 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
       const errorMessage = error instanceof Error ? error.message : "Unknown Firestore error";
       console.error("Failed operation:", failedOperation, errorCode, errorMessage);
       const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "";
-      setError(code === "permission-denied" && failedOperation === "MemoryMap write" ? "MemoryMap write denied" : code === "permission-denied" && failedOperation === "Owner membership write" ? "Owner membership write denied" : code === "permission-denied" && failedOperation === "Initial floor write" ? "Initial floor write denied" : code === "map-creation-failed" ? "Map creation failed" : code === "owner-membership-failed" ? "Owner membership creation failed" : code === "ground-floor-failed" ? "Ground Floor creation failed" : code === "permission-denied" ? "The database denied this request. Please check the Firestore rules." : code === "unauthenticated" ? "Your sign-in session expired. Please sign in again." : code === "unavailable" ? "The database is temporarily unavailable. Please try again." : "We could not create your MemoryMap. Please try again.");
+      setError(code === "guest-campus-limit" ? "Guest mode allows one campus. Continue with Google to create more." : code === "permission-denied" && failedOperation === "MemoryMap write" ? "MemoryMap write denied" : code === "permission-denied" && failedOperation === "Owner membership write" ? "Owner membership write denied" : code === "permission-denied" && failedOperation === "Owner membership index write" ? "Owner membership index write denied" : code === "permission-denied" && failedOperation === "Initial floor write" ? "Initial floor write denied" : code === "map-creation-failed" ? "Map creation failed" : code === "owner-membership-failed" ? "Owner membership creation failed" : code === "owner-index-failed" ? "Owner membership index creation failed" : code === "ground-floor-failed" ? "Ground Floor creation failed" : code === "permission-denied" ? "The database denied this request. Please check the Firestore rules." : code === "unauthenticated" ? "Your sign-in session expired. Please sign in again." : code === "unavailable" ? "The database is temporarily unavailable. Please try again." : "We could not create your MemoryMap. Please try again.");
       setIsSubmitting(false);
     }
   };

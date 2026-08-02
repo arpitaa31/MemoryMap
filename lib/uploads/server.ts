@@ -27,6 +27,7 @@ type FirestoreDocumentResponse = {
 export type VerifiedRequest = {
   idToken: string;
   uid: string;
+  isAnonymous: boolean;
 };
 
 export type CdnUploadMetadata = {
@@ -105,6 +106,8 @@ export async function authenticateRequest(request: Request): Promise<
     const firebaseUser = users[0];
     const uid = isRecord(firebaseUser) && typeof firebaseUser.localId === "string" ? firebaseUser.localId : null;
     const disabled = isRecord(firebaseUser) && firebaseUser.disabled === true;
+    const providerUserInfo = isRecord(firebaseUser) && Array.isArray(firebaseUser.providerUserInfo) ? firebaseUser.providerUserInfo : [];
+    const isAnonymous = isRecord(firebaseUser) && !firebaseUser.email && providerUserInfo.length === 0;
 
     if (!uid) {
       return { ok: false, response: NextResponse.json({ error: "Your sign-in session is no longer valid." }, { status: 401 }) };
@@ -114,7 +117,7 @@ export async function authenticateRequest(request: Request): Promise<
       return { ok: false, response: NextResponse.json({ error: "This account is disabled." }, { status: 403 }) };
     }
 
-    return { ok: true, request: { idToken, uid } };
+    return { ok: true, request: { idToken, uid, isAnonymous } };
   } catch {
     return { ok: false, response: NextResponse.json({ error: "Authentication could not be verified." }, { status: 503 }) };
   }
