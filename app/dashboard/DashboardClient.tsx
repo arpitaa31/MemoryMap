@@ -298,11 +298,11 @@ export default function DashboardClient() {
     }
   };
 
-  const handleCampusDeleted = ({ failed, missing }: { failed: number; missing: number }) => {
+  const handleCampusDeleted = ({ failed, missing, code }: { failed: number; missing: number; code?: string }) => {
     if (!deleteCampus) return;
     setMemoryMaps((current) => current.filter((item) => item.id !== deleteCampus.id));
     setOpenMenuId(null);
-    setDeleteMessage(failed > 0 || missing > 0 ? "Campus deleted. Some image files could not be cleaned up." : "Campus deleted.");
+    setDeleteMessage(code === "server-not-configured" ? "Campus deleted. The server deletion service is not configured for some image cleanup." : failed > 0 || missing > 0 ? "Campus deleted. Some image files could not be cleaned up." : "Campus deleted.");
     setDeleteCampus(null);
   };
 

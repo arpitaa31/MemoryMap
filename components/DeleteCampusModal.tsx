@@ -7,15 +7,17 @@ type DeleteCampusModalProps = {
   campusId: string;
   campusName: string;
   onClose: () => void;
-  onDeleted: (imageCleanup: { failed: number; missing: number }) => void;
+  onDeleted: (imageCleanup: { failed: number; missing: number; code?: string }) => void;
 };
 
 function getErrorMessage(status: number, code: string) {
   if (status === 401 || code === "unauthenticated") return "Your sign-in session expired. Please sign in again.";
   if (status === 403 || code === "not-owner") return "Only the campus owner can delete this campus.";
   if (status === 404 || code === "campus-not-found") return "This campus no longer exists.";
-  if (code === "service-unavailable") return "Campus deletion is temporarily unavailable. Please try again.";
-  return "We could not delete this campus. Please try again.";
+  if (code === "server-not-configured" || code === "service-unavailable") return "The server deletion service is not configured.";
+  if (code === "image-cleanup-failed") return "Some uploaded images could not be removed.";
+  if (code === "cleanup-failed") return "The campus data could not be removed.";
+  return "The campus data could not be removed.";
 }
 
 export default function DeleteCampusModal({ campusId, campusName, onClose, onDeleted }: DeleteCampusModalProps) {
@@ -61,18 +63,19 @@ export default function DeleteCampusModal({ campusId, campusName, onClose, onDel
     setError("");
     setIsDeleting(true);
     try {
-      const idToken = await user.getIdToken(true);
+      const idToken = await user.getIdToken();
       const response = await fetch(`/api/memorymaps/${encodeURIComponent(campusId)}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${idToken}` },
       });
-      const result = await response.json().catch(() => ({})) as { code?: string; error?: string; imageCleanup?: { failed?: number; missing?: number } };
-      if (!response.ok || result.code === "cleanup-failed") {
-        setError(getErrorMessage(response.status, typeof result.code === "string" ? result.code : ""));
+      const result = await response.json().catch(() => ({})) as { deleted?: boolean; error?: { code?: string; message?: string; stage?: string }; imageCleanup?: { failed?: number; missing?: number } };
+      const errorCode = typeof result.error?.code === "string" ? result.error.code : "";
+      if (!response.ok && result.deleted !== true) {
+        setError(getErrorMessage(response.status, errorCode));
         setIsDeleting(false);
         return;
       }
-      onDeleted({ failed: result.imageCleanup?.failed ?? 0, missing: result.imageCleanup?.missing ?? 0 });
+      onDeleted({ failed: result.imageCleanup?.failed ?? 0, missing: result.imageCleanup?.missing ?? 0, code: errorCode || undefined });
       onClose();
     } catch {
       setError("We could not connect to the campus deletion service. Please try again.");
