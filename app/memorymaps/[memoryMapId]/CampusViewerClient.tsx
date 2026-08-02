@@ -1,6 +1,6 @@
 "use client";
 
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, increment, orderBy, query, serverTimestamp, updateDoc, writeBatch } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, increment, onSnapshot, orderBy, query, serverTimestamp, updateDoc, writeBatch } from "firebase/firestore";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -70,6 +70,13 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
     };
     void load();
     return () => { cancelled = true; };
+  }, [authLoading, memoryMapId, router, user]);
+
+  useEffect(() => {
+    if (authLoading || !user || !db) return;
+    return onSnapshot(doc(db, "memoryMaps", memoryMapId), (snapshot) => {
+      if (!snapshot.exists()) router.replace("/dashboard?deleted=1");
+    }, () => undefined);
   }, [authLoading, memoryMapId, router, user]);
 
   const current = floors.find((item) => item.floor.id === floorId) ?? floors[0];

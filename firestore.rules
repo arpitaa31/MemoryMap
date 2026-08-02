@@ -28,11 +28,6 @@ service cloud.firestore {
         && get(mapPath(memoryMapId)).data.ownerId == request.auth.uid;
     }
 
-    function isOwnerAfterWrite(memoryMapId) {
-      return signedIn()
-        && getAfter(mapPath(memoryMapId)).data.ownerId == request.auth.uid;
-    }
-
     function isActiveMember(memoryMapId) {
       return signedIn() && (isExistingOwner(memoryMapId) || get(memberPath(memoryMapId, request.auth.uid)).data.status == "active");
     }
@@ -63,7 +58,12 @@ service cloud.firestore {
       allow delete: if isExistingOwner(memoryMapId);
 
       match /members/{userId} {
-        allow create: if (isOwnerAfterWrite(memoryMapId) && userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.role == "owner" && request.resource.data.status == "active")
+        allow create: if (signedIn()
+            && userId == request.auth.uid
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.role == "owner"
+            && request.resource.data.status == "active"
+            && get(mapPath(memoryMapId)).data.ownerId == request.auth.uid)
           || (registeredUser() && userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.role == "member" && request.resource.data.status == "active" && hasActiveInvite(request.resource.data.inviteCode));
 
         allow read: if isActiveMember(memoryMapId);
@@ -71,7 +71,8 @@ service cloud.firestore {
       }
 
       match /floors/{floorId} {
-        allow create: if isOwnerAfterWrite(memoryMapId);
+        allow create: if signedIn()
+          && get(mapPath(memoryMapId)).data.ownerId == request.auth.uid;
 
         allow read: if isActiveMember(memoryMapId);
         allow update, delete: if isExistingOwner(memoryMapId);
@@ -112,25 +113,8 @@ service cloud.firestore {
     }
 
     match /users/{userId}/memoryMaps/{memoryMapId} {
-      allow read: if signedIn() && userId == request.auth.uid;
-      allow create, update: if signedIn()
-        && userId == request.auth.uid
-        && request.resource.data.memoryMapId == memoryMapId
-        && request.resource.data.ownerId == get(mapPath(memoryMapId)).data.ownerId
-        && request.resource.data.role in ["owner", "member"]
-        && request.resource.data.status == "active"
-        && (
-          (request.resource.data.role == "owner"
-            && request.resource.data.ownerId == request.auth.uid
-            && getAfter(memberPath(memoryMapId, userId)).data.userId == request.auth.uid
-            && getAfter(memberPath(memoryMapId, userId)).data.role == "owner"
-            && getAfter(memberPath(memoryMapId, userId)).data.status == "active")
-          || (request.resource.data.role == "member"
-            && getAfter(memberPath(memoryMapId, userId)).data.userId == request.auth.uid
-            && getAfter(memberPath(memoryMapId, userId)).data.role == "member"
-            && getAfter(memberPath(memoryMapId, userId)).data.status == "active")
-        );
-      allow delete: if signedIn() && userId == request.auth.uid;
+      allow read, create, update, delete: if signedIn()
+        && request.auth.uid == userId;
     }
   }
 }

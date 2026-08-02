@@ -11,6 +11,7 @@ import { useAuth } from "../providers/AuthProvider";
 import { assertFirebaseConfig, auth, db } from "../../lib/firebase/client";
 import { signOut } from "firebase/auth";
 import UpgradeModal from "../../components/UpgradeModal";
+import DeleteCampusModal from "../../components/DeleteCampusModal";
 
 export type MemoryMapSummary = {
   id: string;
@@ -173,6 +174,9 @@ export default function DashboardClient() {
   const [isUpgradeOpen, setIsUpgradeOpen] = useState(false);
   const [signOutError, setSignOutError] = useState("");
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [deleteCampus, setDeleteCampus] = useState<MemoryMapSummary | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [deleteMessage, setDeleteMessage] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("deleted") === "1" ? "This campus no longer exists." : "");
   const [campusFilter, setCampusFilter] = useState<"all" | "owned" | "shared" | "setup">("all");
   const mapsLoading = ownedMapsLoading || sharedMapsLoading;
 
@@ -182,6 +186,22 @@ export default function DashboardClient() {
       router.replace("/login?next=/dashboard");
     }
   }, [loading, router, user]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user) return;
+    if (new URLSearchParams(window.location.search).get("deleted") !== "1") return;
+    window.history.replaceState({}, "", "/dashboard");
+  }, [user]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && !target.closest(".mm-dashboard-card-menu")) setOpenMenuId(null);
+    };
+    document.addEventListener("pointerdown", closeMenu);
+    return () => document.removeEventListener("pointerdown", closeMenu);
+  }, [openMenuId]);
 
   useEffect(() => {
     if (loading || !user) return;
@@ -278,6 +298,14 @@ export default function DashboardClient() {
     }
   };
 
+  const handleCampusDeleted = ({ failed, missing }: { failed: number; missing: number }) => {
+    if (!deleteCampus) return;
+    setMemoryMaps((current) => current.filter((item) => item.id !== deleteCampus.id));
+    setOpenMenuId(null);
+    setDeleteMessage(failed > 0 || missing > 0 ? "Campus deleted. Some image files could not be cleaned up." : "Campus deleted.");
+    setDeleteCampus(null);
+  };
+
   if (loading) return <DashboardLoadingState message="Checking your session…" />;
   if (!user) return <DashboardLoadingState message="Redirecting to sign in…" />;
 
@@ -364,6 +392,7 @@ export default function DashboardClient() {
 
           {ownedMapsError && <p className="mm-auth-message mm-auth-message--error" role="alert">Owned campuses could not be loaded. <button type="button" className="mm-dashboard-inline-retry" onClick={() => { setOwnedMapsLoading(true); setSharedMapsLoading(true); setOwnedMapsError(false); setSharedMapsError(false); setRetryCount((count) => count + 1); }}>Try again</button></p>}
           {sharedMapsError && <p className="mm-auth-message mm-auth-message--error" role="alert">Shared campuses could not be loaded. <button type="button" className="mm-dashboard-inline-retry" onClick={() => { setOwnedMapsLoading(true); setSharedMapsLoading(true); setOwnedMapsError(false); setSharedMapsError(false); setRetryCount((count) => count + 1); }}>Try again</button></p>}
+          {deleteMessage && <p className="mm-auth-message" role="status" aria-live="polite">{deleteMessage}</p>}
 
           {mapsLoading && (
             <div className="mm-dashboard-list__loading" aria-busy="true">
@@ -394,21 +423,73 @@ export default function DashboardClient() {
 
           {!mapsLoading && memoryMaps.length > 0 && (
             <div className="mm-dashboard-map-grid">
-              {visibleMaps.map((memoryMap, index) => (
-                <Link className="mm-dashboard-map-card" key={memoryMap.id} href={`/memorymaps/${memoryMap.id}${memoryMap.accessRole === "owner" && memoryMap.status === "setup" ? "/setup" : ""}`}>
-                  <div className="mm-dashboard-map-card__heading">
-                    <div><h3>{memoryMap.name}</h3>{memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}{memoryMap.isShared && <p>Owner: {memoryMap.ownerName || "MemoryMap owner"}</p>}</div>
-                    <span className="mm-dashboard-private">{memoryMap.isShared ? "Shared with you" : "Owner"}</span>
-                  </div>
-                  <MiniCampusPreview variant={index % 3} />
-                  <div className="mm-dashboard-map-card__stats" aria-label={`${memoryMap.roomCount} rooms, ${memoryMap.memoryCount} memories, ${memoryMap.memberCount} members`}>
-                    <span><b>{memoryMap.roomCount}</b> rooms</span>
-                    <span><b>{memoryMap.memoryCount}</b> memories</span>
-                    <span><b>{memoryMap.memberCount}</b> members</span>
-                  </div>
-                  <div className="mm-dashboard-map-card__footer"><span>{formatUpdatedDate(memoryMap.updatedAt)}</span><small>{memoryMap.status === "setup" ? "Continue setup" : "Open campus"}</small></div>
-                </Link>
-              ))}
+              {visibleMaps.map((memoryMap, index) => {
+                const isOwner = memoryMap.accessRole === "owner" || memoryMap.ownerId === user.uid;
+                const campusHref = `/memorymaps/${memoryMap.id}${isOwner && memoryMap.status === "setup" ? "/setup" : ""}`;
+                console.log("Campus card role", {
+                  campusId: memoryMap.id,
+                  accessRole: memoryMap.accessRole,
+                  ownerId: memoryMap.ownerId,
+                  currentUserId: user?.uid,
+                });
+                return (
+                  <article className="mm-dashboard-map-card" key={memoryMap.id}>
+                    <div className="mm-dashboard-map-card__heading">
+                      <Link className="mm-dashboard-map-card__link mm-dashboard-map-card__link--heading" href={campusHref}>
+                        <div><h3>{memoryMap.name}</h3>{memoryMap.schoolName && <p>{memoryMap.schoolName}</p>}{memoryMap.isShared && <p>Owner: {memoryMap.ownerName || "MemoryMap owner"}</p>}</div>
+                      </Link>
+                      <div className="mm-dashboard-map-card__heading-actions">
+                        <span className="mm-dashboard-private">{isOwner ? "Owner" : "Shared with you"}</span>
+                        {isOwner && (
+                          <div className="mm-dashboard-card-menu">
+                            <button
+                              type="button"
+                              className="mm-dashboard-card-menu__trigger"
+                              aria-label="Campus actions"
+                              aria-haspopup="menu"
+                              aria-expanded={openMenuId === memoryMap.id}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setOpenMenuId((current) => current === memoryMap.id ? null : memoryMap.id);
+                              }}
+                            >
+                              <span className="mm-dashboard-card-menu__dots" aria-hidden="true">{"\u22ee"}</span>
+                            </button>
+                            {openMenuId === memoryMap.id && (
+                              <div className="mm-dashboard-card-menu__dropdown" role="menu">
+                                <Link role="menuitem" href={campusHref} onClick={() => setOpenMenuId(null)}>
+                                  {memoryMap.status === "setup" ? "Continue setup" : "Open campus"}
+                                </Link>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setOpenMenuId(null);
+                                    setDeleteMessage("");
+                                    setDeleteCampus(memoryMap);
+                                  }}
+                                >
+                                  Delete campus
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <Link className="mm-dashboard-map-card__link" href={campusHref}>
+                      <MiniCampusPreview variant={index % 3} />
+                      <div className="mm-dashboard-map-card__stats" aria-label={`${memoryMap.roomCount} rooms, ${memoryMap.memoryCount} memories, ${memoryMap.memberCount} members`}>
+                        <span><b>{memoryMap.roomCount}</b> rooms</span>
+                        <span><b>{memoryMap.memoryCount}</b> memories</span>
+                        <span><b>{memoryMap.memberCount}</b> members</span>
+                      </div>
+                      <div className="mm-dashboard-map-card__footer"><span>{formatUpdatedDate(memoryMap.updatedAt)}</span><small>{memoryMap.status === "setup" ? "Continue setup" : "Open campus"}</small></div>
+                    </Link>
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>
@@ -417,6 +498,7 @@ export default function DashboardClient() {
       </div>
       <CreateMemoryMapModal open={isCreateOpen} user={user} onClose={() => setIsCreateOpen(false)} />
       {isUpgradeOpen && <UpgradeModal onClose={() => setIsUpgradeOpen(false)} />}
+      {deleteCampus && <DeleteCampusModal campusId={deleteCampus.id} campusName={deleteCampus.name} onClose={() => setDeleteCampus(null)} onDeleted={handleCampusDeleted} />}
     </main>
   );
 }

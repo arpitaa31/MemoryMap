@@ -1,6 +1,6 @@
 "use client";
 
-import { deleteDoc, collection, doc, getDoc, getDocs, increment, orderBy, query, serverTimestamp, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { deleteDoc, collection, doc, getDoc, getDocs, increment, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, writeBatch } from "firebase/firestore";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -43,6 +43,22 @@ function RoomNode({ room, preview, selected, onSelect, onPointerDown, onKeyDown 
   return <button type="button" className={`mm-builder-room mm-builder-room--${room.accent}${selected ? " is-selected" : ""}`} style={{ left: `${room.x}px`, top: `${room.y}px`, width: `${room.width}px`, height: `${room.height}px` }} aria-label={`${room.name}, ${room.type}, ${selected ? "selected" : "select room"}`} aria-pressed={selected} onClick={onSelect} onPointerDown={(event) => { if (!preview) onPointerDown(event, "move"); }} onKeyDown={onKeyDown}>
     <span className="mm-builder-room__type">{room.type}</span><strong>{room.name}</strong><small>{selected && !preview ? "Selected" : "Room"}</small>{!preview && selected && <span className="mm-builder-room__resize" aria-hidden="true" onPointerDown={(event) => { event.stopPropagation(); onPointerDown(event as unknown as React.PointerEvent<HTMLButtonElement>, "resize"); }} />}
   </button>;
+}
+
+type BuilderIconName = "floor" | "room" | "corridor" | "members" | "layout" | "tip" | "preview" | "check";
+
+function BuilderIcon({ name }: { name: BuilderIconName }) {
+  const paths: Record<BuilderIconName, React.ReactNode> = {
+    floor: <><path d="M4 7.5 12 4l8 3.5-8 3-8-3Z" /><path d="m4 12.5 8 3 8-3M4 16.5l8 3 8-3" /></>,
+    room: <><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M8 8h8v8H8z" /></>,
+    corridor: <><path d="M4 17c3.5-8 8.5-8 12-2 1.2 2 2.4 2.3 4 .5" /><circle cx="4" cy="17" r="1.5" /><circle cx="20" cy="15.5" r="1.5" /></>,
+    members: <><circle cx="9" cy="8" r="3" /><path d="M3.5 19c.6-3 2.4-4.5 5.5-4.5s4.9 1.5 5.5 4.5" /><path d="M16 6.5a3 3 0 0 1 0 5.8M17 14.8c2.2.3 3.5 1.7 4 4.2" /></>,
+    layout: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
+    tip: <><path d="M8.2 16.5h7.6M9 20h6M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.2 1.2 2h4.8c.1-.8.5-1.5 1.2-2A6 6 0 0 0 12 3Z" /><path d="M12 6v4M10 8h4" /></>,
+    preview: <><path d="M3.5 12s3.1-5 8.5-5 8.5 5 8.5 5-3.1 5-8.5 5-8.5-5-8.5-5Z" /><circle cx="12" cy="12" r="2.2" /></>,
+    check: <><path d="m5 12 4.2 4L19 6.5" /></>,
+  };
+  return <span className="mm-builder-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg></span>;
 }
 
 export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: string }) {
@@ -104,6 +120,13 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
     };
     void load();
     return () => { cancelled = true; };
+  }, [authLoading, memoryMapId, router, user]);
+
+  useEffect(() => {
+    if (authLoading || !user || !db) return;
+    return onSnapshot(mapRefFor(db, memoryMapId), (snapshot) => {
+      if (!snapshot.exists()) router.replace("/dashboard?deleted=1");
+    }, () => undefined);
   }, [authLoading, memoryMapId, router, user]);
 
   useEffect(() => {
@@ -300,23 +323,36 @@ export default function CampusBuilderClient({ memoryMapId }: { memoryMapId: stri
   if (accessState === "error" || !map || !currentState) return <main className="mm-state-page"><h1>We could not load this builder</h1><p>Check your connection and try opening the MemoryMap again.</p><Link href="/dashboard" className="mm-button mm-button--coral">Back to dashboard</Link></main>;
 
   const draftPolyline = [...draftPoints, ...(cursorPoint ? [cursorPoint] : [])].map((point) => `${point.x},${point.y}`).join(" ");
+  const corridorCount = floors.reduce((total, state) => total + state.corridors.length, 0);
+  const builderSteps = [
+    { number: 1, label: "Add a floor", complete: floors.length > 0 },
+    { number: 2, label: "Place rooms", complete: roomCount > 0 },
+    { number: 3, label: "Connect spaces", complete: corridorCount > 0 },
+    { number: 4, label: "Finish setup", complete: map.status === "active" },
+  ];
+  const activeStep = builderSteps.find((step) => !step.complete)?.number ?? 4;
+  const progressPercent = Math.round((builderSteps.filter((step) => step.complete).length / builderSteps.length) * 100);
+  const activeRoomCount = currentState.rooms.length;
+  const activeCorridorCount = currentState.corridors.length;
   return <main className="mm-builder">
     {modal === "upgrade" && <UpgradeModal onClose={() => setModal(null)} />}
     <header className="mm-builder__topbar">
-      <Link href="/dashboard" className="mm-brand mm-builder__brand" aria-label="Back to dashboard"><MemoryMapLogo size={32} variant="dark" /><MemoryMapWordmark /></Link>
-      <div className="mm-builder__identity"><label className="mm-builder__campus-name-label" htmlFor="campus-name">Campus name</label><input id="campus-name" className="mm-builder__campus-name" value={map.name} maxLength={80} onChange={(event) => setMap((previous) => previous ? { ...previous, name: event.target.value } : previous)} onBlur={() => void saveMapName()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} aria-label="Campus name" /><span>Setup mode</span></div>
-      <div className="mm-builder__floor-title"><span>{currentState.floor.name}</span><small aria-live="polite">{saveState}</small></div>
-      <div className="mm-builder__actions"><button type="button" className="mm-button mm-button--outline mm-button--small" onClick={() => setModal("invite")}>Add members</button><button type="button" className="mm-button mm-button--outline mm-button--small" onClick={() => setModal("done")}>Done</button></div>
+      <div className="mm-builder__topbar-left"><Link href="/dashboard" className="mm-brand mm-builder__brand" aria-label="Back to dashboard"><MemoryMapLogo size={32} variant="dark" /><MemoryMapWordmark /></Link><span className="mm-builder__topbar-divider" aria-hidden="true" /><div className="mm-builder__identity"><div className="mm-builder__identity-meta"><span className="mm-builder__campus-name-label">Workspace</span><span className="mm-builder__status-pill"><i aria-hidden="true" /> Setup mode</span></div><label className="sr-only" htmlFor="campus-name">Campus name</label><input id="campus-name" className="mm-builder__campus-name" value={map.name} maxLength={80} onChange={(event) => setMap((previous) => previous ? { ...previous, name: event.target.value } : previous)} onBlur={() => void saveMapName()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} aria-label="Campus name" /></div></div>
+      <div className="mm-builder__floor-title"><span>{currentState.floor.name}</span><small aria-live="polite"><i aria-hidden="true" /> {saveState}</small><b>Step {activeStep} of 4</b></div>
+      <div className="mm-builder__actions"><Link href={`/memorymaps/${memoryMapId}`} className="mm-builder__preview-action"><BuilderIcon name="preview" />Preview</Link><button type="button" className="mm-button mm-button--coral mm-builder__complete-action" onClick={() => void finishSetup()}><BuilderIcon name="check" />Complete setup</button></div>
     </header>
     <div className="mm-builder__body">
       <aside className="mm-builder__tools" aria-label="Campus builder tools"><span className="mm-builder__tools-label">Build this place</span><button type="button" onClick={() => setModal("floor")}>＋ Add floor</button><button type="button" onClick={() => void addRoom()}>＋ Add room</button><button type="button" onClick={() => { setDrawMode(true); setDrawStyle("stairs"); setDraftPoints([]); setSelection(null); }}>+ Add stairs</button><button type="button" aria-pressed={drawMode} className={drawMode ? "is-active" : ""} onClick={() => { setDrawMode(true); setDrawStyle("solid"); setDraftPoints([]); setSelection(null); }}>⌁ Add corridor</button><button type="button" onClick={() => setModal("invite")}>＋ Add members</button><button type="button" className="mm-builder__done-tool" onClick={() => void finishSetup()}>Done</button></aside>
       <section className={`mm-builder__workspace${drawMode ? " is-drawing" : ""}`} aria-label="Campus design workspace">
+        <div className="mm-builder__workspace-heading"><div><span className="mm-builder__eyebrow">Canvas</span><h1>Shape the places that matter</h1><p>Place the rooms and paths your group will want to remember.</p></div><div className="mm-builder__canvas-stats"><span><strong>{floors.length}</strong> {floors.length === 1 ? "floor" : "floors"}</span><span><strong>{roomCount}</strong> {roomCount === 1 ? "room" : "rooms"}</span><span><strong>{corridorCount}</strong> {corridorCount === 1 ? "connection" : "connections"}</span></div></div>
+        <div className="mm-builder__progress-steps" aria-label={`Setup progress: ${progressPercent}% complete`}>{builderSteps.map((step) => <span className={step.complete ? "is-complete" : step.number === activeStep ? "is-active" : ""} key={step.number}><b>{step.complete ? "✓" : step.number}</b>{step.label}</span>)}</div>
         <div className="mm-builder__floor-tabs" role="tablist" aria-label="Floors">{floors.map((state) => <button type="button" role="tab" aria-selected={state.floor.id === currentFloorId} key={state.floor.id} onClick={() => { setCurrentFloorId(state.floor.id); setSelection(null); }}>{state.floor.name}</button>)}</div>
-        <div ref={canvasRef} className="mm-builder__canvas" tabIndex={0} onClick={addCorridorPoint} onDoubleClick={() => void finishCorridor()} onMouseMove={(event) => { if (drawMode && canvasRef.current) setCursorPoint(pointFromEvent(event, canvasRef.current)); }} onKeyDown={(event) => { if (drawMode && event.key === "Enter") void finishCorridor(); }}>
+        <div className="mm-builder__canvas-shell"><div className="mm-builder__canvas-toolbar"><span><i aria-hidden="true" /> {drawMode ? "Drawing mode" : "Select and arrange"}</span><small>{drawMode ? "Click points, then press Enter to finish" : "Drag rooms to place them · drag the corner to resize"}</small></div><div ref={canvasRef} className="mm-builder__canvas" tabIndex={0} onClick={addCorridorPoint} onDoubleClick={() => void finishCorridor()} onMouseMove={(event) => { if (drawMode && canvasRef.current) setCursorPoint(pointFromEvent(event, canvasRef.current)); }} onKeyDown={(event) => { if (drawMode && event.key === "Enter") void finishCorridor(); }}>
+          {activeRoomCount === 0 && activeCorridorCount === 0 && !drawMode && <div className="mm-builder__canvas-empty"><div className="mm-builder__canvas-empty-art"><BuilderIcon name="layout" /></div><strong>Start building this place</strong><p>Add rooms, corridors and the spaces people remember.</p><button type="button" className="mm-button mm-button--coral mm-button--small" onClick={(event) => { event.stopPropagation(); void addRoom(); }}>Add your first room</button></div>}
           <span className="mm-builder__canvas-label">{drawMode ? "Click to place points · Enter or double-click to finish · Escape to cancel" : "Ground plan · place rooms where the memories happened"}</span>
           <svg className="mm-builder__corridors" viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`} aria-hidden="true">{currentState.corridors.map((corridor) => <g key={corridor.id} onPointerDown={(event) => beginCorridorDrag(event, corridor)} onClick={(event) => { event.stopPropagation(); if (!drawMode) setSelection({ kind: "corridor", id: corridor.id }); }} className={selection?.kind === "corridor" && selection.id === corridor.id ? "is-selected" : ""}><polyline points={corridor.points.map((point) => `${point.x},${point.y}`).join(" ")} className={`mm-builder-corridor mm-builder-corridor--${corridor.style}`} style={{ strokeWidth: corridor.width }} /><text x={corridor.points[0]?.x ?? 0} y={(corridor.points[0]?.y ?? 0) - 10}>{corridor.label}</text></g>)}{draftPolyline && <polyline points={draftPolyline} className="mm-builder-corridor mm-builder-corridor--draft" />}</svg>
           {currentState.rooms.map((room) => <RoomNode key={room.id} room={room} preview={false} selected={selection?.kind === "room" && selection.id === room.id} onSelect={() => { if (!drawMode) setSelection({ kind: "room", id: room.id }); }} onPointerDown={(event, mode) => beginDrag(event, room.id, mode)} onKeyDown={(event) => handleRoomKey(event, room)} />)}
-        </div>
+        </div><div className="mm-builder__canvas-footer"><span><kbd>Esc</kbd> cancel drawing</span><span><kbd>Shift</kbd> + drag for precise placement</span><span>{currentState.floor.name} · {activeRoomCount} rooms</span></div></div>
       </section>
       <aside className="mm-builder__inspector" aria-label="Selection inspector">{selectedRoom ? <><span className="mm-builder__tools-label">Selected room</span><label>Room name<input value={selectedRoom.name} onChange={(event) => updateRoomLocal(selectedRoom.id, { name: event.target.value.slice(0, 80) })} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label><label>Room type<select value={selectedRoom.type} onChange={(event) => updateRoomLocal(selectedRoom.id, { type: event.target.value as RoomType })}>{roomTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label><span className="mm-builder__field-label">Accent</span><div className="mm-builder__accent-list">{accents.map((accent) => <button type="button" key={accent} aria-pressed={selectedRoom.accent === accent} className={`mm-builder__accent mm-builder__accent--${accent}`} onClick={() => updateRoomLocal(selectedRoom.id, { accent })}>{accent}</button>)}</div><button type="button" className="mm-builder__text-button" onClick={() => void duplicateRoom()}>Duplicate room</button><button type="button" className="mm-builder__danger-button" onClick={() => void deleteRoom()}>Delete room</button></> : selectedCorridor ? <><span className="mm-builder__tools-label">Selected corridor</span><label>Corridor label<input value={selectedCorridor.label} onChange={(event) => { const value = event.target.value; setFloors((previous) => previous.map((state) => state.floor.id !== currentState.floor.id ? state : { ...state, corridors: state.corridors.map((corridor) => corridor.id === selectedCorridor.id ? { ...corridor, label: value } : corridor) })); }} onBlur={async () => { if (db) await updateDoc(doc(db, "memoryMaps", memoryMapId, "floors", currentState.floor.id, "corridors", selectedCorridor.id), { label: selectedCorridor.label, updatedAt: serverTimestamp() }); }} /></label><label>Width<input type="range" min="6" max="30" value={selectedCorridor.width} onChange={(event) => { const width = Number(event.target.value); setFloors((previous) => previous.map((state) => state.floor.id !== currentState.floor.id ? state : { ...state, corridors: state.corridors.map((corridor) => corridor.id === selectedCorridor.id ? { ...corridor, width } : corridor) })); }} onMouseUp={() => { if (db) void updateDoc(doc(db, "memoryMaps", memoryMapId, "floors", currentState.floor.id, "corridors", selectedCorridor.id), { width: selectedCorridor.width, updatedAt: serverTimestamp() }); }} /></label><button type="button" className="mm-builder__danger-button" onClick={() => void deleteCorridor()}>Delete corridor</button></> : <><span className="mm-builder__tools-label">Floor settings</span><label>Floor name<input value={currentState.floor.name} onChange={(event) => setFloors((previous) => previous.map((state) => state.floor.id === currentState.floor.id ? { ...state, floor: { ...state.floor, name: event.target.value } } : state))} onBlur={async () => { if (db && currentState.floor.name.trim().length >= 2) await updateDoc(doc(db, "memoryMaps", memoryMapId, "floors", currentState.floor.id), { name: currentState.floor.name.trim(), updatedAt: serverTimestamp() }); }} /></label><button type="button" className="mm-builder__danger-button" disabled={floors.length <= 1} onClick={() => void deleteFloor()}>Delete floor</button><p className="mm-builder__hint">Select a room to edit its label, type, colour, position or size.</p></>}
       </aside>
