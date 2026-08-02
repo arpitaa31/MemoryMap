@@ -61,9 +61,6 @@ export async function DELETE(
   let auth: ReturnType<typeof getAdminServices>["auth"];
   let firestore: ReturnType<typeof getAdminServices>["firestore"];
   try {
-    if (!process.env.FIREBASE_ADMIN_PROJECT_ID || !process.env.FIREBASE_ADMIN_CLIENT_EMAIL || !process.env.FIREBASE_ADMIN_PRIVATE_KEY) {
-      return failureResponse("verify Firebase ID token", 503, "server-not-configured", "The server deletion service is not configured.", new Error("Firebase Admin credentials are not configured."));
-    }
     ({ auth, firestore } = getAdminServices());
   } catch (error) {
     return failureResponse("verify Firebase ID token", 503, "server-not-configured", "The server deletion service is not configured.", error);
