@@ -7,12 +7,26 @@ export const runtime = "nodejs";
 
 const MEMORY_MAP_ID_PATTERN = /^[^/\\]{1,150}$/;
 const DELETE_BATCH_SIZE = 450;
+const SAFE_DELETION_MESSAGE = "The campus data could not be removed.";
 
 type ImageCleanup = { attempted: number; deleted: number; missing: number; failed: number };
 
-function failureResponse(stage: string, status: number, code: string, message: string) {
-  console.error("Campus deletion failed", { stage, status, code, message });
+function logStageFailure(stage: string, error: unknown) {
+  console.error("Campus deletion failed", {
+    stage,
+    code: error instanceof Error ? error.name : "unknown",
+    message: error instanceof Error ? error.message : String(error),
+  });
+}
+
+function failureResponse(stage: string, status: number, code: string, message: string, error: unknown = new Error(message)) {
+  logStageFailure(stage, error);
   return NextResponse.json({ error: { code, message, stage } }, { status });
+}
+
+function cleanupFailure(stage: string, error: unknown) {
+  logStageFailure(stage, error);
+  return NextResponse.json({ error: { code: "campus_deletion_failed", message: SAFE_DELETION_MESSAGE, stage } }, { status: 500 });
 }
 
 async function deleteReferences(firestore: FirebaseFirestore.Firestore, references: DocumentReference[]) {
@@ -47,52 +61,51 @@ export async function DELETE(
   let auth: ReturnType<typeof getAdminServices>["auth"];
   let firestore: ReturnType<typeof getAdminServices>["firestore"];
   try {
-    if (!process.env.FIREBASE_ADMIN_PROJECT_ID || !process.env.FIREBASE_ADMIN_CLIENT_EMAIL || !process.env.FIREBASE_ADMIN_PRIVATE_KEY || !process.env.HACKCLUB_CDN_API_KEY) {
-      return failureResponse("verify Firebase ID token", 503, "server-not-configured", "The server deletion service is not configured.");
+    if (!process.env.FIREBASE_ADMIN_PROJECT_ID || !process.env.FIREBASE_ADMIN_CLIENT_EMAIL || !process.env.FIREBASE_ADMIN_PRIVATE_KEY) {
+      return failureResponse("verify Firebase ID token", 503, "server-not-configured", "The server deletion service is not configured.", new Error("Firebase Admin credentials are not configured."));
     }
     ({ auth, firestore } = getAdminServices());
-  } catch {
-    return failureResponse("verify Firebase ID token", 503, "server-not-configured", "The server deletion service is not configured.");
+  } catch (error) {
+    return failureResponse("verify Firebase ID token", 503, "server-not-configured", "The server deletion service is not configured.", error);
   }
 
   let verifiedToken;
   try {
     verifiedToken = await auth.verifyIdToken(idToken);
-  } catch {
-    return failureResponse("verify Firebase ID token", 401, "unauthenticated", "Your sign-in session expired. Please sign in again.");
+  } catch (error) {
+    return failureResponse("verify Firebase ID token", 401, "unauthenticated", "Your sign-in session expired. Please sign in again.", error);
   }
 
   const mapRef = firestore.collection("memoryMaps").doc(memoryMapId);
   let mapSnapshot;
   try {
     mapSnapshot = await mapRef.get();
-  } catch {
-    return failureResponse("load MemoryMap", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("load MemoryMap", error);
   }
   if (!mapSnapshot.exists) {
-    return failureResponse("load MemoryMap", 404, "campus-not-found", "This campus no longer exists.");
+    return failureResponse("load MemoryMap", 404, "campus-not-found", "This campus no longer exists.", new Error("MemoryMap document does not exist."));
   }
 
   const mapData = mapSnapshot.data() ?? {};
   if (mapData.ownerId !== verifiedToken.uid) {
-    return failureResponse("confirm requester is owner", 403, "not-owner", "Only the campus owner can delete this campus.");
+    return failureResponse("confirm requester is owner", 403, "not-owner", "Only the campus owner can delete this campus.", new Error("Requester does not own this MemoryMap."));
   }
 
   let memorySnapshot;
   try {
     memorySnapshot = await mapRef.collection("memories").get();
-  } catch {
-    return failureResponse("load memories", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("load memories", error);
   }
 
   const uploadIds = [...new Set(memorySnapshot.docs
     .map((memory) => memory.data().imageUploadId)
     .filter((uploadId): uploadId is string => typeof uploadId === "string" && uploadId.length > 0))];
   const imageCleanup: ImageCleanup = { attempted: uploadIds.length, deleted: 0, missing: 0, failed: 0 };
-  let imageCleanupFailed = false;
 
-  try {
-    for (const uploadId of uploadIds) {
+  for (const uploadId of uploadIds) {
+    try {
       const removed = await deleteFromHackClubCdn(uploadId);
       if (removed.ok) {
         imageCleanup.deleted += 1;
@@ -100,33 +113,40 @@ export async function DELETE(
         imageCleanup.missing += 1;
       } else {
         imageCleanup.failed += 1;
-        imageCleanupFailed = true;
-        console.error("Campus image cleanup upload failed", { uploadId, status: removed.error.status ?? 503, code: removed.error.kind, message: "The image service did not remove this upload." });
-        console.error("Campus deletion failed", { stage: "delete Hack Club CDN images", status: 503, code: removed.error.kind === "missing-key" ? "server-not-configured" : "image-cleanup-failed", message: "Some uploaded images could not be removed." });
+        const imageError = new Error("The image service did not remove this upload.");
+        imageError.name = removed.error.kind;
+        logStageFailure("delete Hack Club CDN images", imageError);
+        console.error("Campus image cleanup upload failed", { uploadId, code: imageError.name, message: imageError.message });
       }
+    } catch (error) {
+      imageCleanup.failed += 1;
+      logStageFailure("delete Hack Club CDN images", error);
+      console.error("Campus image cleanup upload failed", { uploadId, code: error instanceof Error ? error.name : "unknown", message: error instanceof Error ? error.message : String(error) });
     }
-  } catch {
-    imageCleanupFailed = true;
-    console.error("Campus deletion failed", { stage: "delete Hack Club CDN images", status: 503, code: "image-cleanup-failed", message: "Some uploaded images could not be removed." });
   }
 
   try {
     await deleteReferences(firestore, memorySnapshot.docs.map((memory) => memory.ref));
-  } catch {
-    return failureResponse("delete memory documents", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("delete memories", error);
   }
 
   let floorSnapshots: QueryDocumentSnapshot[];
   try {
     floorSnapshots = (await mapRef.collection("floors").get()).docs;
+  } catch (error) {
+    return cleanupFailure("load floors", error);
+  }
+
+  try {
     const roomReferences: DocumentReference[] = [];
     for (const floor of floorSnapshots) {
       const rooms = await floor.ref.collection("rooms").get();
       rooms.docs.forEach((room) => roomReferences.push(room.ref));
     }
     await deleteReferences(firestore, roomReferences);
-  } catch {
-    return failureResponse("delete room documents", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("delete rooms", error);
   }
 
   try {
@@ -136,14 +156,14 @@ export async function DELETE(
       corridors.docs.forEach((corridor) => corridorReferences.push(corridor.ref));
     }
     await deleteReferences(firestore, corridorReferences);
-  } catch {
-    return failureResponse("delete corridor documents", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("delete corridors", error);
   }
 
   try {
     await deleteReferences(firestore, floorSnapshots.map((floor) => floor.ref));
-  } catch {
-    return failureResponse("delete floor documents", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("delete floors", error);
   }
 
   let memberIds = new Set<string>([verifiedToken.uid]);
@@ -155,40 +175,37 @@ export async function DELETE(
       memberIds.add(typeof userId === "string" && userId ? userId : member.id);
     });
     await deleteReferences(firestore, members.docs.map((member) => member.ref));
-  } catch {
-    return failureResponse("delete member documents", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("delete members", error);
   }
 
   try {
     const indexReferences = [...memberIds].map((userId) => firestore.collection("users").doc(userId).collection("memoryMaps").doc(memoryMapId));
     await deleteReferences(firestore, indexReferences);
-  } catch {
-    return failureResponse("delete user campus indexes", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("delete user campus indexes", error);
   }
 
   const inviteCode = typeof mapData.inviteCode === "string" ? mapData.inviteCode : "";
   if (inviteCode) {
     try {
       await firestore.collection("inviteCodes").doc(inviteCode).delete();
-    } catch {
-      return failureResponse("delete invite-code document", 500, "cleanup-failed", "The campus data could not be removed.");
+    } catch (error) {
+      return cleanupFailure("delete invite-code mapping", error);
     }
   }
 
   try {
     await mapRef.delete();
-  } catch {
-    return failureResponse("delete MemoryMap document", 500, "cleanup-failed", "The campus data could not be removed.");
+  } catch (error) {
+    return cleanupFailure("delete parent MemoryMap", error);
   }
 
-  if (imageCleanupFailed) {
-    return NextResponse.json({
-      ok: false,
-      deleted: true,
-      imageCleanup,
-      error: { code: "image-cleanup-failed", message: "Some uploaded images could not be removed.", stage: "delete Hack Club CDN images" },
-    }, { status: 503 });
-  }
-
-  return NextResponse.json({ ok: true, deleted: true, imageCleanup });
+  return NextResponse.json({
+    ok: true,
+    deleted: true,
+    imageCleanup,
+    partialCleanup: imageCleanup.failed > 0 || imageCleanup.missing > 0,
+    ...(imageCleanup.failed > 0 ? { warning: { code: "image_cleanup_partial", message: "Some uploaded images could not be removed.", stage: "delete Hack Club CDN images" } } : {}),
+  });
 }
