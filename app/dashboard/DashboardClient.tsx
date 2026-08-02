@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 import CreateMemoryMapModal from "../../components/CreateMemoryMapModal";
 import MemoryMapLogo from "../components/MemoryMapLogo";
 import MemoryMapWordmark from "../components/MemoryMapWordmark";
-import DashboardDecorations from "./components/DashboardDecorations";
 import { useAuth } from "../providers/AuthProvider";
 import { assertFirebaseConfig, auth, db } from "../../lib/firebase/client";
 import { signOut } from "firebase/auth";
@@ -24,6 +23,7 @@ export type MemoryMapSummary = {
   status: "setup" | "active";
   isShared?: boolean;
   ownerName?: string;
+  accessRole?: "owner" | "member";
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 };
@@ -154,70 +154,54 @@ export default function DashboardClient() {
 
     const loadMemoryMaps = async () => {
       let stage = "configuration";
+      const logFailure = (error: unknown) => {
+        const errorRecord = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : null;
+        const code = errorRecord?.code !== undefined ? String(errorRecord.code) : "unknown";
+        const message = typeof errorRecord?.message === "string" ? errorRecord.message : error instanceof Error ? error.message : String(error);
+        console.error("Dashboard campus load failed", { stage, code, message });
+      };
       try {
         assertFirebaseConfig();
         if (!db) throw new Error("Firestore is unavailable.");
         const firestore = db;
-        const memoryMapsQuery = query(collection(db, "memoryMaps"), where("ownerId", "==", user.uid));
-        stage = "owned campus query";
-        let snapshot;
-        try { snapshot = await getDocs(memoryMapsQuery); } catch (error) { console.error("Dashboard campus load failed", { stage, code: error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined, message: error instanceof Error ? error.message : "Unknown Firestore error" }); throw error; }
-        stage = "membership index query";
-        let membershipSnapshot;
-        try { membershipSnapshot = await getDocs(collection(firestore, "users", user.uid, "memoryMaps")); } catch (error) { console.error("Dashboard campus load failed", { stage, code: error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined, message: error instanceof Error ? error.message : "Unknown Firestore error" }); throw error; }
+        const ownedQuery = query(collection(firestore, "memoryMaps"), where("ownerId", "==", user.uid));
+        stage = "owned campuses query";
+        let ownedSnapshot;
+        try { ownedSnapshot = await getDocs(ownedQuery); } catch (error) { logFailure(error); if (!cancelled) { setMapsError(true); setMapsLoading(false); } return; }
         if (cancelled) return;
 
-        const nextMaps: MemoryMapSummary[] = snapshot.docs.map((document) => {
+        const ownedMaps: MemoryMapSummary[] = ownedSnapshot.docs.map((document) => {
           const data = document.data() as Record<string, unknown>;
-          return {
-            id: document.id,
-            name: typeof data.name === "string" && data.name.trim() ? data.name : "Untitled MemoryMap",
-            schoolName: typeof data.schoolName === "string" ? data.schoolName : undefined,
-            ownerId: user.uid,
-            privacy: "private" as const,
-            roomCount: countOrDefault(data.roomCount, 0),
-            memoryCount: countOrDefault(data.memoryCount, 0),
-            memberCount: countOrDefault(data.memberCount, 1),
-            status: data.status === "active" ? "active" as const : "setup" as const,
-            createdAt: timestampOrUndefined(data.createdAt),
-            updatedAt: timestampOrUndefined(data.updatedAt),
-            isShared: false,
-          } satisfies MemoryMapSummary;
+          return { id: document.id, name: typeof data.name === "string" && data.name.trim() ? data.name : "Untitled MemoryMap", schoolName: typeof data.schoolName === "string" ? data.schoolName : undefined, ownerId: typeof data.ownerId === "string" ? data.ownerId : user.uid, privacy: "private" as const, roomCount: countOrDefault(data.roomCount, 0), memoryCount: countOrDefault(data.memoryCount, 0), memberCount: countOrDefault(data.memberCount, 1), status: data.status === "active" ? "active" as const : "setup" as const, createdAt: timestampOrUndefined(data.createdAt), updatedAt: timestampOrUndefined(data.updatedAt), isShared: false, accessRole: "owner" as const } satisfies MemoryMapSummary;
         });
+        setMemoryMaps(ownedMaps);
+        setMapsError(false);
+        setMapsLoading(false);
 
-        const ownedIds = new Set(nextMaps.map((memoryMap) => memoryMap.id));
-        stage = "shared campus document load";
-        const sharedMaps = await Promise.all(membershipSnapshot.docs
-          .filter((membership) => membership.data().status === "active" && !ownedIds.has(membership.id))
-          .map(async (membership): Promise<MemoryMapSummary | null> => {
-            let document;
-            try { document = await getDoc(doc(firestore, "memoryMaps", membership.id)); } catch (error) { console.error("Dashboard campus load failed", { stage, code: error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined, message: error instanceof Error ? error.message : "Unknown Firestore error" }); throw error; }
+        stage = "shared membership index";
+        let membershipSnapshot;
+        try { membershipSnapshot = await getDocs(collection(firestore, "users", user.uid, "memoryMaps")); } catch (error) { logFailure(error); return; }
+        if (cancelled) return;
+
+        stage = "shared campus documents";
+        const ownedIds = new Set(ownedMaps.map((memoryMap) => memoryMap.id));
+        const sharedMaps = await Promise.all(membershipSnapshot.docs.filter((membership) => membership.data().status === "active" && !ownedIds.has(membership.id)).map(async (membership): Promise<MemoryMapSummary | null> => {
+          try {
+            const document = await getDoc(doc(firestore, "memoryMaps", membership.id));
             if (!document.exists()) return null;
             const data = document.data() as Record<string, unknown>;
             if (data.status !== "active" || data.ownerId === user.uid) return null;
-            return {
-              id: document.id,
-              name: typeof data.name === "string" && data.name.trim() ? data.name : "Untitled MemoryMap",
-              ownerId: typeof data.ownerId === "string" ? data.ownerId : "",
-              ownerName: typeof data.ownerName === "string" ? data.ownerName : undefined,
-              privacy: "private" as const,
-              roomCount: countOrDefault(data.roomCount, 0), memoryCount: countOrDefault(data.memoryCount, 0), memberCount: countOrDefault(data.memberCount, 1),
-              status: "active" as const, isShared: true,
-              updatedAt: timestampOrUndefined(data.updatedAt), createdAt: timestampOrUndefined(data.createdAt),
-            } satisfies MemoryMapSummary;
-          }));
-        nextMaps.push(...sharedMaps.filter((memoryMap): memoryMap is MemoryMapSummary => memoryMap !== null));
-
-        nextMaps.sort((a, b) => (b.updatedAt?.toMillis() ?? 0) - (a.updatedAt?.toMillis() ?? 0));
-        setMemoryMaps(nextMaps);
+            return { id: document.id, name: typeof data.name === "string" && data.name.trim() ? data.name : "Untitled MemoryMap", ownerId: typeof data.ownerId === "string" ? data.ownerId : "", ownerName: typeof data.ownerName === "string" ? data.ownerName : undefined, privacy: "private" as const, roomCount: countOrDefault(data.roomCount, 0), memoryCount: countOrDefault(data.memoryCount, 0), memberCount: countOrDefault(data.memberCount, 1), status: "active" as const, isShared: true, accessRole: "member" as const, updatedAt: timestampOrUndefined(data.updatedAt), createdAt: timestampOrUndefined(data.createdAt) } satisfies MemoryMapSummary;
+          } catch (error) { logFailure(error); return null; }
+        }));
+        const merged = [...ownedMaps, ...sharedMaps.filter((memoryMap): memoryMap is MemoryMapSummary => memoryMap !== null)];
+        merged.sort((a, b) => (b.updatedAt?.toMillis() ?? 0) - (a.updatedAt?.toMillis() ?? 0));
+        setMemoryMaps(merged);
       } catch (error) {
-        console.error("Dashboard campus load failed", { stage, code: error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined, message: error instanceof Error ? error.message : "Unknown Firestore error" });
-        if (!cancelled) setMapsError(true);
-      } finally {
-        if (!cancelled) setMapsLoading(false);
+        logFailure(error);
+        if (!cancelled) { setMapsError(true); setMapsLoading(false); }
       }
     };
-
     void loadMemoryMaps();
     return () => {
       cancelled = true;

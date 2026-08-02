@@ -33,7 +33,8 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid;
 
-      allow read: if signedIn() && (resource.data.ownerId == request.auth.uid || get(/databases/$(database)/documents/memoryMaps/$(memoryMapId)/members/$(request.auth.uid)).data.status == "active");
+      allow get: if isActiveMember(memoryMapId);
+      allow list: if signedIn() && resource.data.ownerId == request.auth.uid;
       allow update: if isExistingOwner(memoryMapId)
         || (isActiveMember(memoryMapId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["memberCount", "updatedAt"]));
       allow delete: if isExistingOwner(memoryMapId);
