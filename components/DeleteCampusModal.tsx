@@ -23,17 +23,18 @@ function getErrorMessage(status: number, code: string) {
 export default function DeleteCampusModal({ campusId, campusName, onClose, onDeleted }: DeleteCampusModalProps) {
   const { user } = useAuth();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [typedName, setTypedName] = useState("");
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const deleteInFlightRef = useRef(false);
   const [error, setError] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+  const isDeletingRef = useRef(false);
   const previousFocus = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     previousFocus.current = document.activeElement as HTMLElement | null;
-    inputRef.current?.focus();
+    cancelButtonRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !isDeleting) {
+      if (event.key === "Escape" && !isDeletingRef.current) {
         event.preventDefault();
         onClose();
         return;
@@ -54,12 +55,12 @@ export default function DeleteCampusModal({ campusId, campusName, onClose, onDel
       document.body.style.overflow = previousOverflow;
       previousFocus.current?.focus();
     };
-  }, [isDeleting, onClose]);
-
-  const canDelete = typedName === campusName && !isDeleting;
+  }, [onClose]);
 
   const deleteCampus = async () => {
-    if (!canDelete || !user) return;
+    if (deleteInFlightRef.current || !user) return;
+    deleteInFlightRef.current = true;
+    isDeletingRef.current = true;
     setError("");
     setIsDeleting(true);
     try {
@@ -72,6 +73,8 @@ export default function DeleteCampusModal({ campusId, campusName, onClose, onDel
       const errorCode = typeof result.error?.code === "string" ? result.error.code : "";
       if (!response.ok && result.deleted !== true) {
         setError(getErrorMessage(response.status, errorCode));
+        deleteInFlightRef.current = false;
+        isDeletingRef.current = false;
         setIsDeleting(false);
         return;
       }
@@ -79,6 +82,8 @@ export default function DeleteCampusModal({ campusId, campusName, onClose, onDel
       onClose();
     } catch {
       setError("We could not connect to the campus deletion service. Please try again.");
+      deleteInFlightRef.current = false;
+      isDeletingRef.current = false;
       setIsDeleting(false);
     }
   };
@@ -89,12 +94,10 @@ export default function DeleteCampusModal({ campusId, campusName, onClose, onDel
         <p className="mm-eyebrow mm-eyebrow--ochre">DELETE CAMPUS</p>
         <h2 id="delete-campus-title">Delete “{campusName}”?</h2>
         <p id="delete-campus-description">This will permanently remove the campus layout, rooms, corridors, members and memories connected to it. This action cannot be undone.</p>
-        <label htmlFor="delete-campus-name">Type the campus name to continue</label>
-        <input ref={inputRef} id="delete-campus-name" value={typedName} onChange={(event) => setTypedName(event.target.value)} autoComplete="off" disabled={isDeleting} />
         {error && <p className="mm-auth-message mm-auth-message--error" role="alert">{error}</p>}
         <div className="mm-create-modal__actions">
-          <button type="button" className="mm-button mm-button--outline" onClick={onClose} disabled={isDeleting}>Cancel</button>
-          <button type="button" className="mm-button mm-delete-campus-modal__danger" onClick={() => void deleteCampus()} disabled={!canDelete}>{isDeleting ? "Deleting…" : "Delete permanently"}</button>
+          <button ref={cancelButtonRef} type="button" className="mm-button mm-button--outline" onClick={onClose} disabled={isDeleting}>Cancel</button>
+          <button type="button" className="mm-button mm-delete-campus-modal__danger" onClick={() => void deleteCampus()} disabled={isDeleting}>{isDeleting ? "Deleting…" : "Delete permanently"}</button>
         </div>
       </div>
     </div>
