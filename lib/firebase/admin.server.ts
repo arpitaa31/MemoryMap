@@ -1,11 +1,10 @@
-import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
+import type { App } from "firebase-admin/app";
 
 // This module is server-only: it is imported only by route handlers and never by client components.
 let adminApp: App | null = null;
+let adminAppPromise: Promise<App> | null = null;
 
-function getAdminApp() {
+async function getAdminApp() {
   const rawPrivateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
   const privateKey = rawPrivateKey
     ?.trim()
@@ -34,17 +33,27 @@ function getAdminApp() {
     throw new Error("Firebase Admin private key is invalid.");
   }
 
-  const existing = getApps()[0];
-  if (existing) {
-    adminApp = existing;
-    return adminApp;
+  if (!adminAppPromise) {
+    adminAppPromise = (async () => {
+      const { cert, getApps, initializeApp } = await import("firebase-admin/app");
+      const existing = getApps()[0];
+      if (existing) return existing;
+      return initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+    })().catch((error) => {
+      adminAppPromise = null;
+      throw error;
+    });
   }
 
-  adminApp = initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+  adminApp = await adminAppPromise;
   return adminApp;
 }
 
-export function getAdminServices() {
-  const app = getAdminApp();
+export async function getAdminServices() {
+  const app = await getAdminApp();
+  const [{ getAuth }, { getFirestore }] = await Promise.all([
+    import("firebase-admin/auth"),
+    import("firebase-admin/firestore"),
+  ]);
   return { auth: getAuth(app), firestore: getFirestore(app) };
 }

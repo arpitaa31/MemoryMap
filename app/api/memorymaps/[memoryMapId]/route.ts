@@ -62,10 +62,10 @@ export async function DELETE(
     return failureResponse(stage, 401, "unauthenticated", "Your sign-in session is required.");
   }
 
-  let auth: ReturnType<typeof getAdminServices>["auth"];
-  let firestore: ReturnType<typeof getAdminServices>["firestore"];
+  let auth: Awaited<ReturnType<typeof getAdminServices>>["auth"];
+  let firestore: Awaited<ReturnType<typeof getAdminServices>>["firestore"];
   try {
-    ({ auth, firestore } = getAdminServices());
+    ({ auth, firestore } = await getAdminServices());
   } catch (error) {
     return failureResponse(stage, 503, "server-not-configured", "The server deletion service is not configured.", error);
   }
