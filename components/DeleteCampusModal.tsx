@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useAuth } from "../app/providers/AuthProvider";
+import { auth } from "../lib/firebase/client";
 
 type DeleteCampusModalProps = {
   campusId: string;
@@ -11,6 +11,8 @@ type DeleteCampusModalProps = {
 };
 
 function getErrorMessage(status: number, code: string, stage: string) {
+  if (code === "auth-config-mismatch") return "The server authentication configuration is incorrect.";
+  if (code === "missing-authorization") return "Your session is missing. Please sign in again.";
   if (stage === "verify token") return "Your session could not be verified. Please sign in again.";
   if (stage === "verify owner" || status === 403 || code === "not-owner") return "Only the campus owner can delete this campus.";
   if (stage === "delete CDN images" || code === "image-cleanup-failed") return "Some image files could not be removed.";
@@ -21,7 +23,6 @@ function getErrorMessage(status: number, code: string, stage: string) {
 }
 
 export default function DeleteCampusModal({ campusId, campusName, onClose, onDeleted }: DeleteCampusModalProps) {
-  const { user } = useAuth();
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const deleteInFlightRef = useRef(false);
@@ -58,14 +59,19 @@ export default function DeleteCampusModal({ campusId, campusName, onClose, onDel
   }, [onClose]);
 
   const deleteCampus = async () => {
-    if (deleteInFlightRef.current || !user) return;
+    if (deleteInFlightRef.current) return;
+    const currentUser = auth?.currentUser;
+    if (!currentUser) {
+      setError("Please sign in again.");
+      return;
+    }
     deleteInFlightRef.current = true;
     isDeletingRef.current = true;
     setError("");
     setIsDeleting(true);
     try {
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`/api/memorymaps/${encodeURIComponent(campusId)}`, {
+      const idToken = await currentUser.getIdToken(true);
+      const response = await fetch(`/api/memorymaps/${campusId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${idToken}` },
       });

@@ -39,13 +39,6 @@ async function deleteReferences(firestore: FirebaseFirestore.Firestore, referenc
   }
 }
 
-function getAuthorizationToken(request: Request) {
-  const authorization = request.headers.get("authorization");
-  if (!authorization || !authorization.toLowerCase().startsWith("bearer ")) return null;
-  const token = authorization.slice(7).trim();
-  return token && token.length <= 4096 ? token : null;
-}
-
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ memoryMapId: string }> },
@@ -57,9 +50,20 @@ export async function DELETE(
   }
 
   stage = "verify token";
-  const idToken = getAuthorizationToken(request);
-  if (!idToken) {
-    return failureResponse(stage, 401, "unauthenticated", "Your sign-in session is required.");
+  const authorization = request.headers.get("authorization");
+  const hasBearerPrefix = authorization?.startsWith("Bearer ") ?? false;
+  const idToken = authorization && hasBearerPrefix ? authorization.slice("Bearer ".length).trim() : "";
+  console.log("Delete authentication diagnostics", {
+    hasAuthorizationHeader: Boolean(authorization),
+    hasBearerPrefix,
+    tokenLength: idToken.length,
+    adminProjectId: process.env.FIREBASE_ADMIN_PROJECT_ID ?? null,
+  });
+  if (!authorization) {
+    return failureResponse(stage, 401, "missing-authorization", "Your session is missing. Please sign in again.");
+  }
+  if (!hasBearerPrefix || !idToken || idToken.length > 4096) {
+    return failureResponse(stage, 401, "unauthenticated", "Your session could not be verified. Please sign in again.");
   }
 
   let auth: Awaited<ReturnType<typeof getAdminServices>>["auth"];
@@ -67,6 +71,10 @@ export async function DELETE(
   try {
     ({ auth, firestore } = await getAdminServices());
   } catch (error) {
+    const errorCode = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    if (errorCode === "project-mismatch") {
+      return failureResponse(stage, 500, "auth-config-mismatch", "The server authentication configuration is incorrect.", error);
+    }
     return failureResponse(stage, 503, "server-not-configured", "The server deletion service is not configured.", error);
   }
 
@@ -74,6 +82,10 @@ export async function DELETE(
   try {
     verifiedToken = await auth.verifyIdToken(idToken);
   } catch (error) {
+    console.error("Firebase token verification failed", {
+      code: error && typeof error === "object" && "code" in error ? String(error.code) : "unknown",
+      message: error instanceof Error ? error.message : String(error),
+    });
     return failureResponse(stage, 401, "unauthenticated", "Your sign-in session expired. Please sign in again.", error);
   }
 
