@@ -575,3 +575,7 @@ This phase replaces the temporary create placeholder with a complete authenticat
 ### Known limitations
 
 - Live Google Authentication and Firestore reads were not exercised from this workspace because `.env.local` does not contain populated Firebase client values and the browser connector was unavailable. The runtime-safe Firebase client, auth guard, owner-scoped query, retry, sign-out, and `/create` flow are implemented and build-verified; deployment still requires the project Firebase variables and authorised domain configuration.
+
+### Firebase Admin dependency compatibility note
+
+- Firebase Admin `14.2.0` currently resolves `jwks-rsa@4.x`, whose CommonJS helper requires the ESM-only `jose@6` web API entry in the Vercel server bundle. The temporary `firebase-admin`-scoped override to `jwks-rsa@3.2.0` keeps Firebase Admin's own ID-token verification intact while resolving the CommonJS-compatible `jose@4` export. Remove this override after a Firebase Admin release no longer produces the incompatible dependency path.
