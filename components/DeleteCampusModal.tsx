@@ -10,12 +10,12 @@ type DeleteCampusModalProps = {
   onDeleted: (imageCleanup: { failed: number; missing: number; code?: string }) => void;
 };
 
-function getErrorMessage(status: number, code: string) {
-  if (status === 401 || code === "unauthenticated") return "Your sign-in session expired. Please sign in again.";
-  if (status === 403 || code === "not-owner") return "Only the campus owner can delete this campus.";
+function getErrorMessage(status: number, code: string, stage: string) {
+  if (stage === "verify token") return "Your session could not be verified. Please sign in again.";
+  if (stage === "verify owner" || status === 403 || code === "not-owner") return "Only the campus owner can delete this campus.";
+  if (stage === "delete CDN images" || code === "image-cleanup-failed") return "Some image files could not be removed.";
   if (status === 404 || code === "campus-not-found") return "This campus no longer exists.";
   if (code === "server-not-configured" || code === "service-unavailable") return "The server deletion service is not configured.";
-  if (code === "image-cleanup-failed") return "Some uploaded images could not be removed.";
   if (code === "cleanup-failed") return "The campus data could not be removed.";
   return "The campus data could not be removed.";
 }
@@ -64,15 +64,20 @@ export default function DeleteCampusModal({ campusId, campusName, onClose, onDel
     setError("");
     setIsDeleting(true);
     try {
-      const idToken = await user.getIdToken();
+      const idToken = await user.getIdToken(true);
       const response = await fetch(`/api/memorymaps/${encodeURIComponent(campusId)}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${idToken}` },
       });
-      const result = await response.json().catch(() => ({})) as { deleted?: boolean; error?: { code?: string; message?: string; stage?: string }; imageCleanup?: { failed?: number; missing?: number } };
+      const responseBody = await response.json().catch(() => ({})) as { deleted?: boolean; error?: { code?: string; message?: string; stage?: string }; imageCleanup?: { failed?: number; missing?: number } };
+      const result = responseBody;
       const errorCode = typeof result.error?.code === "string" ? result.error.code : "";
       if (!response.ok && result.deleted !== true) {
-        setError(getErrorMessage(response.status, errorCode));
+        console.error("Delete campus API failed", {
+          status: response.status,
+          error: responseBody?.error,
+        });
+        setError(getErrorMessage(response.status, errorCode, result.error?.stage ?? ""));
         deleteInFlightRef.current = false;
         isDeletingRef.current = false;
         setIsDeleting(false);
