@@ -1,16 +1,19 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 export async function deleteCampusFromDashboard(page: Page, campusName: string) {
   await page.goto("/dashboard");
   const card = page.locator("article.mm-dashboard-map-card").filter({ hasText: campusName }).first();
+  await page.getByRole("heading", { name: /Welcome/i }).waitFor({ state: "visible", timeout: 30_000 }).catch(() => undefined);
+  if (!(await card.isVisible().catch(() => false))) {
+    await expect(card).toBeVisible({ timeout: 30_000 }).catch(() => undefined);
+  }
   if (!(await card.isVisible().catch(() => false))) return false;
   await card.getByRole("button", { name: "Campus actions" }).click();
   await card.getByRole("menuitem", { name: "Delete campus" }).click();
   const dialog = page.getByRole("dialog", { name: /Delete/i });
   await dialog.getByRole("button", { name: "Delete permanently" }).click();
-  await page.waitForLoadState("networkidle").catch(() => undefined);
-  await page.waitForTimeout(800);
-  return !(await page.locator("article.mm-dashboard-map-card").filter({ hasText: campusName }).count());
+  await expect(page.locator("article.mm-dashboard-map-card").filter({ hasText: campusName })).toHaveCount(0, { timeout: 30_000 });
+  return true;
 }
 
 export async function closeGuestUpgrade(page: Page) {

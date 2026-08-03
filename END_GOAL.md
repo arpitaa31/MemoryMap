@@ -576,6 +576,14 @@ This phase replaces the temporary create placeholder with a complete authenticat
 
 - Live Google Authentication and Firestore reads were not exercised from this workspace because `.env.local` does not contain populated Firebase client values and the browser connector was unavailable. The runtime-safe Firebase client, auth guard, owner-scoped query, retry, sign-out, and `/create` flow are implemented and build-verified; deployment still requires the project Firebase variables and authorised domain configuration.
 
+### Production Playwright verification
+
+- Added Chromium Playwright coverage under `tests/e2e/` with redacted console/page/network diagnostics, failure screenshots, first-retry tracing, responsive screenshots, and an HTML report configuration in `playwright.config.ts`.
+- Final command: `npx playwright test --project=chromium` against `https://memory-map-lyart.vercel.app/` — 10 passed, 1 skipped, 0 failed.
+- Verified in Chromium: public homepage and login, Google flow startup, guest sign-in, guest campus creation, Ground Floor, room creation/rename/move/resize, corridor creation, setup completion, viewer room memories, guest image/invite/join restrictions, guest one-campus limit, campus deletion and refresh removal, and all seven requested public viewport sizes.
+- Fixed during verification: guest builder invite access now uses the upgrade gate, and anonymous invite routes render the guest-private state instead of staying in loading.
+- Registered-owner incidents, registered CDN uploads, two-account invites/shared dashboard, and registered-only deletion remain explicitly unverified because secure Google E2E credentials were unavailable. Full results are recorded in `PLAYWRIGHT_TEST_REPORT.md`; no claim is made for those skipped features.
+
 ### Firebase Admin dependency compatibility note
 
 - Firebase Admin `14.2.0` currently resolves `jwks-rsa@4.x`, whose CommonJS helper requires the ESM-only `jose@6` web API entry in the Vercel server bundle. The temporary `firebase-admin`-scoped override to `jwks-rsa@3.2.0` keeps Firebase Admin's own ID-token verification intact while resolving the CommonJS-compatible `jose@4` export. Remove this override after a Firebase Admin release no longer produces the incompatible dependency path.

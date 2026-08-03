@@ -101,11 +101,10 @@ test.describe("guest production flow", () => {
       await page.goto("/dashboard");
       await expect(page.getByText(campusName, { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Start building" }).click();
-      const secondDialog = page.getByRole("dialog", { name: /What place are we remembering/i });
-      await secondDialog.getByLabel("Campus or place name").fill(`${campusName}-Second`);
-      await secondDialog.getByRole("button", { name: "Start building" }).click();
-      await expect(secondDialog).toContainText("Guest mode allows one campus");
-      await secondDialog.getByRole("button", { name: "Cancel" }).click();
+      const limitDialog = page.getByRole("dialog", { name: /Save and share/i });
+      await expect(limitDialog).toBeVisible();
+      await expect(limitDialog).toContainText("keep your campus");
+      await closeGuestUpgrade(page);
 
       expect(await deleteCampusFromDashboard(page, campusName)).toBeTruthy();
       await page.reload();

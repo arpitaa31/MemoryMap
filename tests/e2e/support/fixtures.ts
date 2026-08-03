@@ -58,7 +58,13 @@ export async function attachDiagnosticsArtifact(diagnostics: SafeDiagnostics, te
 
 export function assertNoDeploymentErrors(diagnostics: SafeDiagnostics) {
   const text = diagnosticsText(diagnostics);
-  expect(text).not.toMatch(/FUNCTION_INVOCATION_FAILED|ERR_REQUIRE_ESM|unauthorized-domain|permission-denied|500|503/i);
+  const expectedAbort = /net::ERR_ABORTED/.test(text);
+  const unexpectedFailedRequests = diagnostics.failedRequests.filter((request) => !(/net::ERR_ABORTED/.test(request) && (/firestore\.googleapis\.com\/google\.firestore\.v1\.Firestore\/Listen/.test(request) || /memory-map-lyart\.vercel\.app\/memorymaps\//.test(request))));
+  expect(diagnostics.consoleErrors, "Unexpected console errors").toEqual([]);
+  expect(diagnostics.pageErrors, "Unexpected page errors").toEqual([]);
+  expect(unexpectedFailedRequests, "Unexpected failed network requests").toEqual([]);
+  expect(diagnostics.serverResponses, "Unexpected server responses").toEqual([]);
+  expect(expectedAbort ? text.replace(/net::ERR_ABORTED/g, "") : text).not.toMatch(/FUNCTION_INVOCATION_FAILED|ERR_REQUIRE_ESM|unauthorized-domain|permission-denied|500|503/i);
 }
 
 export const test = base.extend<{ diagnostics: SafeDiagnostics }>({
