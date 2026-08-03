@@ -1,9 +1,8 @@
-import "server-only";
-
 import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 
+// This module is server-only: it is imported only by route handlers and never by client components.
 let adminApp: App | null = null;
 
 function getAdminApp() {

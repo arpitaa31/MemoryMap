@@ -1,6 +1,6 @@
 import type { DocumentReference, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
-import { getAdminServices } from "../../../../lib/firebase/admin";
+import { getAdminServices } from "../../../../lib/firebase/admin.server";
 import { deleteFromHackClubCdn } from "../../../../lib/uploads/server";
 
 export const runtime = "nodejs";
