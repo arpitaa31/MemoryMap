@@ -4,6 +4,10 @@ import { closeGuestUpgrade, deleteCampusFromDashboard } from "./support/helpers"
 test.describe("guest production flow", () => {
   test("creates, edits, restricts, finishes and deletes a guest campus", async ({ page, diagnostics }) => {
     const campusName = `E2E-Guest-Campus-${Date.now()}`;
+    const uploadRequests: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/api/memorymaps/") && request.url().endsWith("/images")) uploadRequests.push(request.url().split("?")[0]);
+    });
     let campusCreated = false;
     try {
       await page.goto("/login?guest=1");
@@ -47,11 +51,12 @@ test.describe("guest production flow", () => {
 
       const resizeHandle = room.locator(".mm-builder-room__resize");
       const beforeResize = await room.boundingBox();
+      await resizeHandle.hover();
       const handleBox = await resizeHandle.boundingBox();
       if (!beforeResize || !handleBox) throw new Error("Guest room resize handle is unavailable.");
       await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
       await page.mouse.down();
-      await page.mouse.move(handleBox.x + 28, handleBox.y + 20);
+      await page.mouse.move(handleBox.x + 80, handleBox.y + 60, { steps: 10 });
       await page.mouse.up();
       await page.waitForTimeout(600);
       const afterResize = await room.boundingBox();
@@ -76,7 +81,17 @@ test.describe("guest production flow", () => {
       await viewerRoom.click();
       await expect(page.getByText("Room memories", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Add image" }).click();
+      const imageDialog = page.getByRole("dialog", { name: /Add a photo memory/i });
+      await expect(imageDialog).toBeVisible();
+      await imageDialog.getByLabel("Image").setInputFiles({
+        name: "E2E-guest-image.jpg",
+        mimeType: "image/jpeg",
+        buffer: Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/AYf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/AYf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCf/9k=", "base64"),
+      });
+      await imageDialog.getByLabel("Title").fill("E2E Guest Image");
+      await imageDialog.getByRole("button", { name: "Upload image" }).click();
       await expect(page.getByRole("dialog", { name: /Save and share/i })).toBeVisible();
+      expect(uploadRequests).toHaveLength(0);
       await closeGuestUpgrade(page);
       await expect(page.getByRole("button", { name: "Invite" })).toHaveCount(0);
 
