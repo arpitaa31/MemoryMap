@@ -65,6 +65,12 @@ a:focus-visible, button:focus-visible, input:focus-visible { outline: 3px solid 
 .mm-eyebrow--moss { color: var(--mm-moss); }
 .mm-eyebrow--ochre { color: var(--mm-ochre); }
 .mm-eyebrow--light { color: #c7d0be; }
+.mm-state-page { min-height: 100svh; display: grid; place-items: center; padding: 24px; background: var(--mm-page); color: var(--mm-ink); }
+.mm-join-state__card { width: min(100%, 560px); display: grid; justify-items: start; gap: 14px; padding: clamp(28px, 6vw, 56px); border: 1px solid var(--mm-border); background: var(--mm-white); box-shadow: 0 22px 70px rgba(32, 33, 29, .08); }
+.mm-join-state__card h1 { max-width: 480px; margin: 0; color: var(--mm-green-dark); font: 400 clamp(32px, 6vw, 52px)/1.04 Georgia, "Times New Roman", serif; letter-spacing: -.04em; }
+.mm-join-state__card p:not(.mm-eyebrow):not(.mm-auth-message) { max-width: 460px; margin: 0; color: var(--mm-ink-soft); line-height: 1.65; }
+.mm-join-state__card .mm-button { width: 100%; margin-top: 4px; }
+.mm-join-state__card .mm-auth-message { margin: 0; }
 .memorymap-logo { --mm-logo-node: #EF684A; --mm-logo-pin-hole: var(--mm-page); display: block; width: auto; flex: 0 0 auto; color: currentColor; transition: transform var(--duration-fast) var(--ease-out-expo); }
 .memorymap-logo--dark { color: #273126; }
 .memorymap-logo--light { --mm-logo-node: #F3C84B; --mm-logo-pin-hole: var(--mm-hero-dark); color: #FFFDF7; }

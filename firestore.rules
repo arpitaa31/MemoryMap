@@ -118,9 +118,10 @@ service cloud.firestore {
         && getAfter(mapPath(request.resource.data.memoryMapId)).data.ownerId == request.auth.uid
         && getAfter(mapPath(request.resource.data.memoryMapId)).data.ownerType != "guest";
 
-      // Direct document-ID checks need to be allowed for both existing and
-      // non-existing codes; no collection query/list access is granted.
-      allow read: if registeredUser();
+      // Invite pages may read only the document whose ID is in the URL after
+      // Firebase Auth has resolved. Collection enumeration stays disabled.
+      allow get: if request.auth != null;
+      allow list: if false;
 
       allow update, delete: if registeredUser()
         && get(mapPath(resource.data.memoryMapId)).data.ownerId == request.auth.uid;
