@@ -20,7 +20,35 @@ export default function JoinMemoryMapClient({ inviteCode }: { inviteCode: string
     if (!user) { router.replace(`/login?next=/join/${inviteCode}`); return; }
     if (user.isAnonymous) return;
     const load = async () => {
-      try { assertFirebaseConfig(); if (!db) throw new Error("Firestore unavailable"); const snapshot = await getDoc(doc(db, "inviteCodes", inviteCode)); const data = snapshot.data(); if (!snapshot.exists() || !data || data.active !== true || typeof data.memoryMapId !== "string") { setState("invalid"); return; } const memoryMapId = data.memoryMapId; const ownerId = typeof data.ownerId === "string" ? data.ownerId : ""; if (ownerId === user.uid) { router.replace(`/memorymaps/${memoryMapId}`); return; } const membership = await getDoc(doc(db, "memoryMaps", memoryMapId, "members", user.uid)); if (membership.exists() && membership.data().status === "active") { router.replace(`/memorymaps/${memoryMapId}`); return; } setInvite({ memoryMapId, ownerId, mapName: typeof data.mapName === "string" ? data.mapName : "Private MemoryMap", ownerName: typeof data.ownerName === "string" ? data.ownerName : null, active: true }); setState("ready"); } catch { setState("error"); }
+      try {
+        assertFirebaseConfig();
+        if (!db) throw new Error("Firestore unavailable");
+        const snapshot = await getDoc(doc(db, "inviteCodes", inviteCode));
+        const data = snapshot.data();
+        if (!snapshot.exists() || !data || data.active !== true || typeof data.memoryMapId !== "string") {
+          setState("invalid");
+          return;
+        }
+        const memoryMapId = data.memoryMapId;
+        const ownerId = typeof data.ownerId === "string" ? data.ownerId : "";
+        if (ownerId === user.uid) {
+          router.replace(`/memorymaps/${memoryMapId}`);
+          return;
+        }
+        const membership = await getDoc(doc(db, "memoryMaps", memoryMapId, "members", user.uid));
+        if (membership.exists() && membership.data().status === "active") {
+          router.replace(`/memorymaps/${memoryMapId}`);
+          return;
+        }
+        setInvite({ memoryMapId, ownerId, mapName: typeof data.mapName === "string" ? data.mapName : "Private MemoryMap", ownerName: typeof data.ownerName === "string" ? data.ownerName : null, active: true });
+        setState("ready");
+      } catch (error) {
+        console.error("Invite check failed", error);
+        setMessage(error instanceof Error && "code" in error && error.code === "permission-denied"
+          ? "You do not have access to check this invite. Please sign in with Google and try again."
+          : "We could not check this invite. Try again later.");
+        setState("error");
+      }
     };
     void load();
   }, [authLoading, inviteCode, router, user]);

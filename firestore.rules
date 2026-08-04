@@ -54,7 +54,17 @@ service cloud.firestore {
               && request.resource.data.memberCount == resource.data.memberCount + 1)
             || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(["memoryCount", "updatedAt"])
               && (request.resource.data.memoryCount == resource.data.memoryCount + 1 || request.resource.data.memoryCount == resource.data.memoryCount - 1))
-          ));
+          ))
+        // A new member and the member counter are written in one batch by the
+        // join flow. The new member is not visible to isActiveMember() until
+        // after the batch commits, so use getAfter() for this one update.
+        || (registeredUser()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["memberCount", "updatedAt"])
+          && request.resource.data.memberCount == resource.data.memberCount + 1
+          && getAfter(memberPath(memoryMapId, request.auth.uid)).data.userId == request.auth.uid
+          && getAfter(memberPath(memoryMapId, request.auth.uid)).data.role == "member"
+          && getAfter(memberPath(memoryMapId, request.auth.uid)).data.status == "active"
+          && hasActiveInvite(getAfter(memberPath(memoryMapId, request.auth.uid)).data.inviteCode));
       allow delete: if isExistingOwner(memoryMapId);
 
       match /members/{userId} {
@@ -66,7 +76,11 @@ service cloud.firestore {
             && get(mapPath(memoryMapId)).data.ownerId == request.auth.uid)
           || (registeredUser() && userId == request.auth.uid && request.resource.data.userId == request.auth.uid && request.resource.data.role == "member" && request.resource.data.status == "active" && hasActiveInvite(request.resource.data.inviteCode));
 
-        allow read: if isActiveMember(memoryMapId);
+        // A prospective member may check their own membership before joining.
+        // This does not expose another member's data and avoids turning a
+        // legitimate duplicate-membership check into permission-denied.
+        allow read: if isActiveMember(memoryMapId)
+          || (signedIn() && userId == request.auth.uid);
         allow update, delete: if isExistingOwner(memoryMapId);
       }
 
