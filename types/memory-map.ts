@@ -23,7 +23,7 @@ export type MemoryMapDocument = {
   coverImageUrl: string | null;
   coverImageStorageId: string | null;
   coverImagePosition: CoverImagePosition;
-  coverImageUpdatedAt?: Timestamp;
+  coverImageUpdatedAt?: Timestamp | null;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
   completedAt?: Timestamp;
