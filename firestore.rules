@@ -36,6 +36,13 @@ service cloud.firestore {
       return code is string && get(/databases/$(database)/documents/inviteCodes/$(code)).data.active == true;
     }
 
+    function guestCoverUpdateAllowed() {
+      return !anonymousUser()
+        || !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          "coverImageUrl", "coverImageStorageId", "coverImagePosition", "coverImageUpdatedAt"
+        ]);
+    }
+
     match /memoryMaps/{memoryMapId} {
       allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
@@ -47,7 +54,7 @@ service cloud.firestore {
       // must constrain the query with where("ownerId", "==", request.auth.uid).
       allow list: if signedIn() && resource.data.ownerId == request.auth.uid;
       allow update: if (isExistingOwner(memoryMapId) && request.resource.data.ownerId == request.auth.uid
-          && (!anonymousUser() || request.resource.data.ownerType == "guest"))
+          && (!anonymousUser() || (request.resource.data.ownerType == "guest" && guestCoverUpdateAllowed())))
         || (isActiveMember(memoryMapId)
           && (
             (request.resource.data.diff(resource.data).affectedKeys().hasOnly(["memberCount", "updatedAt"])

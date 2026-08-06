@@ -1,6 +1,6 @@
 import { Timestamp } from "firebase/firestore";
 import type { DocumentData, DocumentSnapshot, QueryDocumentSnapshot } from "firebase/firestore";
-import type { MemoryDocument, MemoryMapCorridor, MemoryMapDocument, MemoryMapFloor, MemoryMapMember, MemoryMapRoom } from "../../types/memory-map";
+import type { CoverImagePosition, MemoryDocument, MemoryMapCorridor, MemoryMapDocument, MemoryMapFloor, MemoryMapMember, MemoryMapRoom } from "../../types/memory-map";
 
 function stringOr(value: unknown, fallback: string) {
   return typeof value === "string" ? value : fallback;
@@ -20,6 +20,10 @@ function timestampOrUndefined(value: unknown) {
 
 function timestampOrNull(value: unknown) {
   return value instanceof Timestamp ? value : null;
+}
+
+function coverPosition(value: unknown): CoverImagePosition {
+  return value === "top" || value === "bottom" ? value : "center";
 }
 
 function dataOf(snapshot: DocumentSnapshot<DocumentData> | QueryDocumentSnapshot<DocumentData>) {
@@ -45,6 +49,7 @@ export function parseMemoryMap(snapshot: DocumentSnapshot<DocumentData>): Memory
     status: data.status === "active" ? "active" : "setup",
     inviteCode: stringOr(data.inviteCode, ""),
     roomCount: numberOr(data.roomCount, 0), memoryCount: numberOr(data.memoryCount, 0), memberCount: numberOr(data.memberCount, 1),
+    coverImageUrl: nullableString(data.coverImageUrl), coverImageStorageId: nullableString(data.coverImageStorageId), coverImagePosition: coverPosition(data.coverImagePosition), coverImageUpdatedAt: timestampOrUndefined(data.coverImageUpdatedAt),
     createdAt: timestampOrUndefined(data.createdAt), updatedAt: timestampOrUndefined(data.updatedAt), completedAt: timestampOrUndefined(data.completedAt),
   };
 }

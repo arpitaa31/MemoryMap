@@ -99,9 +99,11 @@ export async function DELETE(
 
     stage = "load memories";
     const memorySnapshot = await mapRef.collection("memories").get();
-    const uploadIds = [...new Set(memorySnapshot.docs
-      .map((memory) => memory.data().imageUploadId)
-      .filter((uploadId): uploadId is string => typeof uploadId === "string" && uploadId.length > 0))];
+    const coverUploadId = typeof mapData.coverImageStorageId === "string" && mapData.coverImageStorageId.length > 0 ? [mapData.coverImageStorageId] : [];
+    const uploadIds = [...new Set([
+      ...memorySnapshot.docs.map((memory) => memory.data().imageUploadId),
+      ...coverUploadId,
+    ].filter((uploadId): uploadId is string => typeof uploadId === "string" && uploadId.length > 0))];
     const imageCleanup: ImageCleanup = { attempted: uploadIds.length, deleted: 0, missing: 0, failed: 0 };
     const failedImageUploadIds: string[] = [];
 

@@ -5,6 +5,7 @@ export type MemoryType = "incident" | "image";
 export type RoomType = "classroom" | "laboratory" | "library" | "auditorium" | "sports" | "office" | "canteen" | "stairs" | "other";
 export type RoomAccent = "coral" | "green" | "yellow" | "teal" | "neutral";
 export type CorridorStyle = "solid" | "dashed" | "stairs";
+export type CoverImagePosition = "top" | "center" | "bottom";
 
 export type MemoryMapDocument = {
   id: string;
@@ -19,6 +20,10 @@ export type MemoryMapDocument = {
   roomCount: number;
   memoryCount: number;
   memberCount: number;
+  coverImageUrl: string | null;
+  coverImageStorageId: string | null;
+  coverImagePosition: CoverImagePosition;
+  coverImageUpdatedAt?: Timestamp;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
   completedAt?: Timestamp;

@@ -7,12 +7,15 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../../../app/providers/AuthProvider";
 import { assertFirebaseConfig, db } from "../../../lib/firebase/client";
 import { linkCurrentUserToGoogle } from "../../../lib/auth/google";
+import type { CoverImagePosition } from "../../../types/memory-map";
 
 type InviteData = {
   memoryMapId: string;
   ownerId: string;
   mapName: string;
   ownerName: string | null;
+  coverImageUrl: string | null;
+  coverImagePosition: CoverImagePosition;
 };
 
 type InviteErrorKind = "invalid" | "inactive" | "permission" | "network";
@@ -48,6 +51,7 @@ export default function JoinMemoryMapClient({ inviteCode }: { inviteCode: string
   const [joining, setJoining] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [inviteImageFailed, setInviteImageFailed] = useState(false);
   const nextPath = `/join/${inviteCode}`;
 
   useEffect(() => {
@@ -110,6 +114,8 @@ export default function JoinMemoryMapClient({ inviteCode }: { inviteCode: string
           ownerId,
           mapName: typeof data.mapName === "string" ? data.mapName : "Private MemoryMap",
           ownerName: typeof data.ownerName === "string" ? data.ownerName : null,
+          coverImageUrl: typeof data.coverImageUrl === "string" ? data.coverImageUrl : null,
+          coverImagePosition: data.coverImagePosition === "top" || data.coverImagePosition === "bottom" ? data.coverImagePosition : "center",
         });
       } catch (error) {
         if (cancelled) return;
@@ -234,6 +240,7 @@ export default function JoinMemoryMapClient({ inviteCode }: { inviteCode: string
 
   return <StatePage>
     <p className="mm-eyebrow mm-eyebrow--ochre">Private invitation</p>
+    {inviteData.coverImageUrl && !inviteImageFailed && <div className="mm-join-cover"><img src={inviteData.coverImageUrl} alt={`${inviteData.mapName} campus cover`} width="1200" height="525" style={{ objectPosition: inviteData.coverImagePosition }} onError={() => setInviteImageFailed(true)} /></div>}
     <h1>Join {inviteData.mapName}</h1>
     <p>{inviteData.ownerName ? `${inviteData.ownerName} invited you to this private campus.` : "You have been invited to a private MemoryMap."}</p>
     {actionError && <p className="mm-auth-message mm-auth-message--error" role="alert">{actionError}</p>}
