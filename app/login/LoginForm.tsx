@@ -55,13 +55,6 @@ export default function LoginForm() {
     if (!loading && user) router.replace(getSafeNext());
   }, [loading, router, user]);
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !auth) return;
-    console.log("Current hostname:", window.location.hostname);
-    console.log("Firebase project:", auth.app.options.projectId);
-    console.log("Firebase auth domain:", auth.app.options.authDomain);
-  }, []);
-
   const handleGoogleSignIn = async () => {
     setMessage("");
     setIsSubmitting(true);
