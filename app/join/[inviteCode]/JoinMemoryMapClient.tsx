@@ -240,7 +240,7 @@ export default function JoinMemoryMapClient({ inviteCode }: { inviteCode: string
 
   return <StatePage>
     <p className="mm-eyebrow mm-eyebrow--ochre">Private invitation</p>
-    {inviteData.coverImageUrl && !inviteImageFailed && <div className="mm-join-cover"><img src={inviteData.coverImageUrl} alt={`${inviteData.mapName} campus cover`} width="1200" height="525" style={{ objectPosition: inviteData.coverImagePosition }} onError={() => setInviteImageFailed(true)} /></div>}
+    {inviteData.coverImageUrl && !inviteImageFailed && <div className="mm-join-cover"><img src={inviteData.coverImageUrl} alt={`${inviteData.mapName} campus cover`} width="1200" height="525" sizes="(max-width: 700px) calc(100vw - 40px), 520px" style={{ objectPosition: inviteData.coverImagePosition }} onError={() => setInviteImageFailed(true)} /></div>}
     <h1>Join {inviteData.mapName}</h1>
     <p>{inviteData.ownerName ? `${inviteData.ownerName} invited you to this private campus.` : "You have been invited to a private MemoryMap."}</p>
     {actionError && <p className="mm-auth-message mm-auth-message--error" role="alert">{actionError}</p>}

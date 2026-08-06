@@ -135,7 +135,7 @@ function MiniCampusPreview({ variant, roomCount, floorCount }: { variant: number
 function CampusCardVisual({ memoryMap, index }: { memoryMap: MemoryMapSummary; index: number }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   if (!memoryMap.coverImageUrl || failedUrl === memoryMap.coverImageUrl) return <MiniCampusPreview variant={index % 3} roomCount={memoryMap.roomCount} floorCount={memoryMap.floorCount} />;
-  return <div className="mm-campus-cover-image"><img src={memoryMap.coverImageUrl} alt={`${memoryMap.name} campus cover`} loading="lazy" decoding="async" width="1200" height="675" style={{ objectPosition: memoryMap.coverImagePosition }} onError={() => setFailedUrl(memoryMap.coverImageUrl)} /></div>;
+  return <div className="mm-campus-cover-image"><img src={memoryMap.coverImageUrl} alt={`${memoryMap.name} campus cover`} loading="lazy" decoding="async" width="1200" height="675" sizes="(max-width: 700px) calc(100vw - 32px), (max-width: 1100px) 50vw, 380px" style={{ objectPosition: memoryMap.coverImagePosition }} onError={() => setFailedUrl(memoryMap.coverImageUrl)} /></div>;
 }
 
 export function DashboardLoadingState({ message = "Loading your dashboard" }: { message?: string }) {
