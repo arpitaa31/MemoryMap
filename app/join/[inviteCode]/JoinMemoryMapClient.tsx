@@ -244,7 +244,7 @@ export default function JoinMemoryMapClient({ inviteCode }: { inviteCode: string
     <h1>Join {inviteData.mapName}</h1>
     <p>{inviteData.ownerName ? `${inviteData.ownerName} invited you to this private campus.` : "You have been invited to a private MemoryMap."}</p>
     {actionError && <p className="mm-auth-message mm-auth-message--error" role="alert">{actionError}</p>}
-    <button type="button" className="mm-button mm-button--coral" onClick={() => void join()}>Join MemoryMap</button>
+    <button type="button" className="mm-button mm-button--coral" onClick={() => void join()}>Join Campus</button>
     <Link href="/dashboard" className="mm-button mm-button--outline">Back to dashboard</Link>
   </StatePage>;
 }
