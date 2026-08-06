@@ -53,12 +53,6 @@ export async function DELETE(
   const authorization = request.headers.get("authorization");
   const hasBearerPrefix = authorization?.startsWith("Bearer ") ?? false;
   const idToken = authorization && hasBearerPrefix ? authorization.slice("Bearer ".length).trim() : "";
-  console.log("Delete authentication diagnostics", {
-    hasAuthorizationHeader: Boolean(authorization),
-    hasBearerPrefix,
-    tokenLength: idToken.length,
-    adminProjectId: process.env.FIREBASE_ADMIN_PROJECT_ID ?? null,
-  });
   if (!authorization) {
     return failureResponse(stage, 401, "missing-authorization", "Your session is missing. Please sign in again.");
   }

@@ -142,8 +142,6 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
         joinedAt: timestamp,
       };
       const floorData = { name: "Ground Floor", order: 0, createdAt: timestamp, updatedAt: timestamp };
-      console.log("Create MemoryMap diagnostics", { authUserExists: Boolean(auth.currentUser), contextUserExists: Boolean(user), authUid: auth.currentUser?.uid ?? null, contextUid: user?.uid ?? null, firebaseProjectId: auth.app.options.projectId, firestoreProjectId: db.app.options.projectId, ownerIdBeingWritten: memoryMapData.ownerId });
-
       if (db.app.options.projectId !== "memorymap-bab33") throw new Error("Unexpected Firebase project.");
       if (memoryMapData.ownerId !== user.uid || memberData.userId !== user.uid || memberData.role !== "owner" || memberData.status !== "active" || ownerIndexData.ownerId !== user.uid || ownerIndexData.role !== "owner" || ownerIndexData.status !== "active") throw new Error("Invalid MemoryMap ownership payload.");
 
@@ -152,7 +150,6 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
       failedOperation = stageName("MemoryMap write", "guest MemoryMap write");
       try {
         await setDoc(doc(db, "memoryMaps", memoryMapId), memoryMapData);
-        console.log("PARENT_MEMORYMAP_WRITE_SUCCEEDED");
       } catch (error) {
         console.error("Map creation failed", error);
         console.error("PARENT_MEMORYMAP_WRITE_FAILED", { code: typeof error === "object" && error !== null && "code" in error ? error.code : "unknown", message: error instanceof Error ? error.message : "Unknown Firestore error" });
@@ -162,7 +159,6 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
       failedOperation = stageName("Owner membership write", "guest owner membership write");
       try {
         await setDoc(doc(db, "memoryMaps", memoryMapId, "members", user.uid), memberData);
-        console.log("Owner member created");
       } catch (error) {
         console.error("Owner membership creation failed", error);
         await deleteDoc(doc(db, "memoryMaps", memoryMapId)).catch(() => undefined);
@@ -172,7 +168,6 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
       failedOperation = stageName("Initial floor write", "guest initial floor write");
       try {
         await setDoc(floorRef, floorData);
-        console.log("Ground Floor created");
       } catch (error) {
         console.error("Ground Floor creation failed", error);
         await deleteDoc(doc(db, "memoryMaps", memoryMapId, "members", user.uid)).catch(() => undefined);
@@ -183,7 +178,6 @@ export default function CreateMemoryMapModal({ open, user, onClose }: CreateMemo
       failedOperation = stageName("Owner membership index write", "guest dashboard-index write");
       try {
         await setDoc(doc(db, "users", user.uid, "memoryMaps", memoryMapId), ownerIndexData);
-        console.log("Owner membership index created");
       } catch (error) {
         console.error("Owner membership index creation failed", error);
         await deleteDoc(doc(db, "memoryMaps", memoryMapId, "floors", floorId)).catch(() => undefined);

@@ -43,6 +43,16 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
   }, [imagePreview]);
 
   useEffect(() => {
+    if (!user?.isAnonymous || !imageOpen) return;
+    // This closes a restricted modal immediately when an anonymous session attempts to open it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setImageOpen(false);
+    setImageFile(null);
+    setImageError("");
+    setUpgradeOpen(true);
+  }, [imageOpen, user]);
+
+  useEffect(() => {
     if (authLoading) return;
     if (!user) { router.replace(`/login?next=/memorymaps/${memoryMapId}`); return; }
     let cancelled = false;

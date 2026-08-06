@@ -272,7 +272,6 @@ function parseCdnSize(value: unknown) {
 
 export async function uploadToHackClubCdn(file: File): Promise<CdnOperationResult<CdnUploadMetadata>> {
   const apiKey = process.env.HACKCLUB_CDN_API_KEY;
-  console.log("Hack Club CDN configured:", Boolean(apiKey));
   if (!apiKey) {
     console.error("Hack Club CDN upload failed", { stage: "configuration", status: 401, responseBody: "missing API key", fileName: file.name, fileSize: file.size, fileType: file.type });
     return { ok: false, error: { kind: "missing-key", status: 401 } };
