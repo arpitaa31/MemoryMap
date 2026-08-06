@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MemoryMap
 
-## Getting Started
+MemoryMap is a website where ppl can recreate real places like their school, college, hostel, office or neighbourhood in the form of an interactive map.
 
-First, run the development server:
+You can create the full campus, add floors, rooms, corridors, memories, pics and even invite your frnds so uall can view the same place together.
+The whole idea is to make old places feel alive again.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Live Website
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+https://memory-map-lyart.vercel.app/
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## What U Can Do Here
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Sign in with Google
+- Try the website as a guest
+- Create your own campus
+- Add floors
+- Add, move and resize rooms
+- Make corridors
+- Add memories inside rooms
+- Upload pics
+- Add a personal cover photo for every campus
+- Invite your frnds through a private link
+- Join campuses shared by other ppl
+- Use the website on desktop, tablet and mobile
 
-## Learn More
+## Guest Mode
 
-To learn more about Next.js, take a look at the following resources:
+You dont even need to sign in first.
+U can try MemoryMap as a guest and understand how the campus builder works.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Guest mode has a few limits though.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+For things like:
 
-## Deploy on Vercel
+- uploading pics
+- joining private campuses
+- inviting frnds
+- accessing shared campuses
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+you will need to sign in with Google for that...
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Invite and Sharing
+
+Campus owners can create a private invite link and send it to someone else.
+
+The invited person can:
+
+1. Open the link
+2. Sign in with Google
+3. Join the campus
+4. View it from the **Shared with you** section
+
+Shared members can view the campus, but they dont get owner controls.
+
+## Built With
+
+- Next.js
+- React
+- TypeScript
+- Firebase Authentication
+- Cloud Firestore
+- Firebase Admin SDK
+- Hack Club CDN
+- Vercel
+
+# Conclusion
+
+MemoryMap started as an idea to make old places feel alive again, and now it is finally complete.
+
+I worked on everything from login, guest mode, campus building, rooms, floors, memories and pics to invite links, shared campuses, cover photos and deletion. I also tested the main features, fixed the major issues and improved the UI so the website feels more complete and easy to use. Yayyy, this website is gonna be sooo fun to use... ima use it too to save my memories with frnds in school.
