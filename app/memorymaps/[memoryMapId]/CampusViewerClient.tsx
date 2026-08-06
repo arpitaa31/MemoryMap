@@ -1,20 +1,17 @@
 "use client";
 
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, increment, onSnapshot, orderBy, query, serverTimestamp, updateDoc, writeBatch } from "firebase/firestore";
-import { signOut } from "firebase/auth";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import MemoryMapLogo from "../../../app/components/MemoryMapLogo";
 import MemoryMapWordmark from "../../../app/components/MemoryMapWordmark";
 import { useAuth } from "../../../app/providers/AuthProvider";
-import { assertFirebaseConfig, auth, db } from "../../../lib/firebase/client";
+import { assertFirebaseConfig, db } from "../../../lib/firebase/client";
 import { parseCorridor, parseFloor, parseMemory, parseMemoryMap, parseRoom } from "../../../lib/memorymaps/data";
 import { deleteMemoryImage, uploadMemoryImage } from "../../../lib/uploads/client";
 import { reserveInviteCode } from "../../../lib/memorymaps/invite";
 import UpgradeModal from "../../../components/UpgradeModal";
-import CampusCoverModal from "../../../components/CampusCoverModal";
-import type { CampusCoverImage } from "../../../lib/uploads/client";
 import type { MemoryDocument, MemoryMapDocument, MemoryMapFloor, MemoryMapRoom, MemoryMapCorridor } from "../../../types/memory-map";
 
 type FloorData = { floor: MemoryMapFloor; rooms: MemoryMapRoom[]; corridors: MemoryMapCorridor[] };
@@ -39,11 +36,6 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
   const [incidentCount, setIncidentCount] = useState(0);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [coverOpen, setCoverOpen] = useState(false);
-  const [coverImageFailed, setCoverImageFailed] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
   const imagePreview = useMemo(() => imageFile ? URL.createObjectURL(imageFile) : null, [imageFile]);
 
   useEffect(() => {
@@ -96,15 +88,6 @@ export default function CampusViewerClient({ memoryMapId }: { memoryMapId: strin
       if (!snapshot.exists()) router.replace("/dashboard?deleted=1");
     }, () => undefined);
   }, [authLoading, memoryMapId, router, user]);
-
-  useEffect(() => {
-    if (!profileOpen && !mobileMenuOpen) return;
-    const closeMenus = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setProfileOpen(false); setMobileMenuOpen(false); }
-    };
-    document.addEventListener("keydown", closeMenus);
-    return () => document.removeEventListener("keydown", closeMenus);
-  }, [mobileMenuOpen, profileOpen]);
 
   const current = floors.find((item) => item.floor.id === floorId) ?? floors[0];
   const selectedRoom = current?.rooms.find((room) => room.id === roomId) ?? (null as never);
@@ -209,23 +192,9 @@ try { const nextCode = await reserveInviteCode(db); const batch = writeBatch(db)
     finally { setSaving(false); }
   };
 
-  const updateCover = (cover: CampusCoverImage | null) => {
-    setCoverImageFailed(false);
-    setMap((previous) => previous ? { ...previous, coverImageUrl: cover?.url ?? null, coverImageStorageId: cover?.storageId ?? null, coverImagePosition: cover?.position ?? "center" } : previous);
-  };
-
-  const handleSignOut = async () => {
-    if (!auth) return;
-    setSigningOut(true);
-    try { await signOut(auth); router.replace("/login"); }
-    catch { setError("We could not end this session. Please try again."); setSigningOut(false); }
-  };
-
   return <main className="mm-viewer">
-    {upgradeOpen && <UpgradeModal onClose={() => setUpgradeOpen(false)} />}{coverOpen && <CampusCoverModal campus={map} onClose={() => setCoverOpen(false)} onSaved={updateCover} />}
-    <header className="mm-viewer__topbar"><div className="mm-viewer__nav-grid"><Link href="/dashboard" className="mm-brand mm-viewer__brand" aria-label="Back to dashboard"><MemoryMapLogo size={36} variant="light" /><MemoryMapWordmark /></Link><div className="mm-viewer__campus"><strong>{map.name}</strong></div><nav className="mm-viewer__actions mm-viewer__desktop-actions" aria-label="Campus actions">{map.ownerId === user?.uid && !user.isAnonymous && <button type="button" className="mm-viewer__invite" onClick={() => { setInviteMessage(""); setInviteOpen(true); }}>Invite</button>}{map.ownerId === user?.uid && <Link href={`/memorymaps/${memoryMapId}/setup`} className="mm-viewer__link mm-viewer__edit">Edit campus</Link>}<Link href="/dashboard" className="mm-viewer__link mm-viewer__dashboard">Dashboard</Link></nav><div className="mm-viewer__mobile-controls"><div className="mm-viewer__mobile-menu"><button type="button" className="mm-viewer__menu-trigger" aria-haspopup="menu" aria-expanded={mobileMenuOpen} aria-label="Open campus actions" onClick={() => { setMobileMenuOpen((value) => !value); setProfileOpen(false); }}>•••</button>{mobileMenuOpen && <div className="mm-viewer__menu-panel" role="menu">{map.ownerId === user?.uid && !user.isAnonymous && <button type="button" role="menuitem" onClick={() => { setInviteMessage(""); setInviteOpen(true); setMobileMenuOpen(false); }}>Invite</button>}{map.ownerId === user?.uid && <Link href={`/memorymaps/${memoryMapId}/setup`} role="menuitem" onClick={() => setMobileMenuOpen(false)}>Edit campus</Link>}<Link href="/dashboard" role="menuitem" onClick={() => setMobileMenuOpen(false)}>Dashboard</Link></div>}</div></div><div className="mm-viewer__profile-menu"><button type="button" className="mm-viewer__avatar" aria-haspopup="menu" aria-expanded={profileOpen} aria-label="Open profile menu" onClick={() => { setProfileOpen((value) => !value); setMobileMenuOpen(false); }}>{user?.isAnonymous ? "G" : (user?.displayName || user?.email || "MM").slice(0, 2).toUpperCase()}</button>{profileOpen && <div className="mm-viewer__profile-panel" role="menu"><div><strong>{user?.isAnonymous ? "Guest session" : user?.displayName || "MemoryMap member"}</strong><small>{user?.isAnonymous ? "Explore mode" : user?.email || "Account connected"}</small></div>{user?.isAnonymous && <button type="button" role="menuitem" onClick={() => { setUpgradeOpen(true); setProfileOpen(false); }}>Sign in with Google</button>}<button type="button" role="menuitem" onClick={() => void handleSignOut()} disabled={signingOut}>{signingOut ? "Signing out…" : user?.isAnonymous ? "Exit guest session" : "Sign out"}</button></div>}</div></div></header>
-
-    <section className="mm-viewer__campus-header" aria-label={`${map.name} campus information`}><div className="mm-viewer__shell mm-viewer__campus-header-inner"><div className="mm-viewer__campus-header-bg">{map.coverImageUrl && !coverImageFailed ? <img src={map.coverImageUrl} alt={`${map.name} campus cover`} width="1600" height="900" style={{ objectPosition: map.coverImagePosition }} onError={() => setCoverImageFailed(true)} /> : null}</div><div className="mm-viewer__campus-header-copy"><p className="mm-viewer__label">Private campus</p><h1>{map.name}</h1><p className="mm-viewer__member-status">{map.ownerId === user?.uid ? "Owner" : "Member"}</p></div><div className="mm-viewer__campus-header-controls">{map.ownerId === user?.uid && !user.isAnonymous && <button type="button" className="mm-viewer__cover-action" onClick={() => setCoverOpen(true)}>{map.coverImageUrl ? "Change cover" : "Add cover"}</button>}<div className="mm-viewer__campus-floors"><span className="mm-viewer__label">Floors</span><div className="mm-viewer__floor-tabs" role="tablist" aria-label="Campus floors">{floors.map((item) => <button type="button" role="tab" key={item.floor.id} aria-selected={item.floor.id === current.floor.id} aria-current={item.floor.id === current.floor.id ? "page" : undefined} onClick={() => { setFloorId(item.floor.id); setRoomId(null); }}>{item.floor.name}</button>)}</div></div></div></div></section>
+    {upgradeOpen && <UpgradeModal onClose={() => setUpgradeOpen(false)} />}
+    <header className="mm-viewer__topbar"><div className="mm-viewer__nav-grid"><div className="mm-viewer__left-zone"><Link href="/dashboard" className="mm-brand mm-viewer__brand" aria-label="Back to dashboard"><MemoryMapLogo size={38} variant="light" /><MemoryMapWordmark /></Link><div className="mm-viewer__campus"><strong>{map.name}</strong><span>Private campus</span></div></div><div className="mm-viewer__floor-control"><span>FLOOR</span><div className="mm-viewer__floor-tabs" role="tablist" aria-label="Campus floors">{floors.map((item) => <button type="button" role="tab" key={item.floor.id} aria-selected={item.floor.id === current.floor.id} onClick={() => { setFloorId(item.floor.id); setRoomId(null); }}>{item.floor.name}</button>)}</div></div><div className="mm-viewer__actions">{map.ownerId === user?.uid && !user.isAnonymous && <button type="button" className="mm-viewer__invite" onClick={() => { setInviteMessage(""); setInviteOpen(true); }}>Invite</button>}{map.ownerId === user?.uid && <Link href={`/memorymaps/${memoryMapId}/setup`} className="mm-viewer__link mm-viewer__edit">Edit campus</Link>}<Link href="/dashboard" className="mm-viewer__link mm-viewer__dashboard">Dashboard</Link><span className="mm-viewer__avatar" aria-label="Account">{user?.isAnonymous ? "G" : (user?.displayName || user?.email || "MM").slice(0, 2).toUpperCase()}</span></div></div></header>
 
     <section className="mm-viewer__layout"><div className="mm-viewer__map" aria-label={`${current.floor.name} rooms`}><h1>{current.floor.name}</h1><div className="mm-viewer__canvas"><svg viewBox="0 0 960 560" aria-hidden="true">{current.corridors.map((corridor) => <polyline key={corridor.id} points={corridor.points.map((point) => `${point.x},${point.y}`).join(" ")} className={`mm-viewer-corridor mm-viewer-corridor--${corridor.style}`} style={{ strokeWidth: corridor.width }} />)}</svg>{current.rooms.map((room) => <button type="button" key={room.id} className={`mm-viewer-room mm-viewer-room--${room.accent}${room.id === roomId ? " is-selected" : ""}`} style={{ left: `${room.x}px`, top: `${room.y}px`, width: `${room.width}px`, height: `${room.height}px` }} aria-pressed={room.id === roomId} onClick={() => setRoomId(room.id)}><strong>{room.name}</strong><small>{room.type}</small></button>)}</div></div>{selectedRoom && <aside className="mm-viewer__panel" aria-label={`${selectedRoom.name} memories`}><button type="button" className="mm-viewer__close" onClick={() => setRoomId(null)} aria-label="Close room memories">×</button><p className="mm-eyebrow mm-eyebrow--yellow">Room memories</p><h2>{selectedRoom.name}</h2><p>{memories.length} memories connected to this place.</p><div className="mm-viewer__actions"><button type="button" className="mm-button mm-button--outline" onClick={() => { setImageError(""); setImageOpen(true); }}>Add image</button><button type="button" className="mm-button mm-button--coral" onClick={() => setIncidentOpen(true)}>Add incident</button></div><div className="mm-viewer__timeline">{memories.length === 0 ? <p className="mm-viewer__empty">No memories here yet. Add the first incident connected to this room.</p> : memories.map((memory) => <article key={memory.id}>{memory.type === "image" && memory.imageUrl && <button type="button" className="mm-memory-thumb-button" onClick={() => setLightboxUrl(memory.imageUrl)} aria-label={`Open larger image for ${memory.title}`}><img className="mm-memory-thumb" src={memory.imageUrl} alt="" /></button>}<small>{memory.eventDate ? memory.eventDate.toDate().toLocaleDateString() : "Undated memory"}</small><h3>{memory.title}</h3><p>{memory.description}</p><span>{memory.creatorName || "MemoryMap member"}</span>{map.ownerId === user?.uid && <button type="button" className="mm-memory-delete" onClick={() => void deleteMemory(memory)} disabled={saving}>Delete</button>}</article>)}</div></aside>}</section>
     {incidentOpen && <div className="mm-viewer-modal" role="dialog" aria-modal="true" aria-labelledby="incident-title"><form onSubmit={addIncident}><p className="mm-eyebrow mm-eyebrow--yellow">Add to {selectedRoom.name}</p><h2 id="incident-title">What happened here?</h2><label>Title<input name="title" required minLength={2} maxLength={100} autoFocus /></label><label>What happened?<textarea name="description" required minLength={2} maxLength={3000} rows={5} /></label><label>Date<input name="date" type="date" /></label><div className="mm-viewer-modal__actions"><button type="button" className="mm-button mm-button--outline" onClick={() => setIncidentOpen(false)}>Cancel</button><button type="submit" className="mm-button mm-button--coral" disabled={saving}>{saving ? "Savingâ€¦" : "Save incident"}</button></div></form></div>}
